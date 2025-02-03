@@ -7,7 +7,7 @@ class OpenAIService:
     """
 
     def __init__(self):
-        openai.api_key = OPENAI_API_KEY  # Load API key
+        self.client = openai.OpenAI(api_key=OPENAI_API_KEY)  # Load API key
 
     def generate_response(self, prompt: str) -> str:
         """
@@ -20,7 +20,7 @@ class OpenAIService:
             str: The AI-generated response.
         """
         try:
-            response = openai.ChatCompletion.create(
+            response = self.client.chat.completions.create(
                 model="gpt-4",
                 messages=[{"role": "system", "content": "You are an AI assistant."},
                           {"role": "user", "content": prompt}]

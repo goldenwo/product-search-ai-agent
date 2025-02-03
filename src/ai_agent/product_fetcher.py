@@ -3,7 +3,7 @@ from src.ai_agent.query_parser import QueryParser
 from src.ai_agent.store_selector import StoreSelector
 from src.ai_agent.ranking import ProductRanker
 from src.services.faiss_service import FAISSService
-from src.utils.config import STORE_APIS
+from src.utils import logger, STORE_APIS
 
 class ProductFetcher:
     """
@@ -11,6 +11,7 @@ class ProductFetcher:
     """
 
     def __init__(self, faiss_service: FAISSService):
+        self.query_parser = QueryParser()
         self.store_selector = StoreSelector()
         self.rank_products = ProductRanker(faiss_service).rank_products
 
@@ -26,15 +27,18 @@ class ProductFetcher:
         Returns:
             List[dict]: List of live product data with URLs.
         """
+        logger.info(f"📡 Fetching products from {store_name} with attributes: {attributes}")
+
         try:
             response = requests.get(store_api_url, params=attributes, timeout=5)
             if response.status_code == 200:
                 products = response.json()
                 for product in products:
                     product["store"] = store_name  # Tag the product with the store name
+                logger.info(f"✅ Retrieved {len(products)} products from {store_name}")
                 return products
         except requests.RequestException as e:
-            print(f"❌ Error fetching data from {store_name}: {e}")
+            logger.error(f"❌ Error fetching data from {store_name}: {e}")
 
         return []
 
@@ -42,8 +46,10 @@ class ProductFetcher:
         """
         Fetches and ranks AI-enhanced product recommendations with live URLs.
         """
+        logger.info(f"🔍 Starting product search for query: {query}")
+
         # Step 1: Extract product attributes from query
-        attributes = QueryParser.extract_product_attributes(query)
+        attributes = self.query_parser.extract_product_attributes(query)
 
         # Step 2: AI selects the best stores dynamically
         selected_stores = self.store_selector.select_best_stores(attributes)
@@ -60,5 +66,5 @@ class ProductFetcher:
 
         # Step 4: Rank products using FAISS AI-based ranking
         ranked_products = self.rank_products(products)
-
+        logger.info(f"✅ Returning {len(ranked_products)} ranked products")
         return ranked_products

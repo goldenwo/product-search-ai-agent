@@ -1,9 +1,8 @@
 """
-Utility package initialization.
-Provides common utilities like logging and configuration management.
+Utility functions and configurations for the AI-powered product search system.
 """
 
-from .logging import setup_logging
-from .config import load_config
+from .config import STORE_APIS, FAISS_VECTOR_DIMENSION, OPENAI_API_KEY, REDIS_HOST, REDIS_PORT, REDIS_DB, REDIS_TTL
+from .logging import logger
 
-__all__ = ["setup_logging", "load_config"]
+__all__ = ["STORE_APIS", "FAISS_VECTOR_DIMENSION", "OPENAI_API_KEY", "REDIS_HOST", "REDIS_PORT", "REDIS_DB", "REDIS_TTL", "logger"]

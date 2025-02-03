@@ -1,5 +1,6 @@
 from typing import Dict
 from src.services.openai_service import OpenAIService
+from src.utils import logger
 
 class QueryParser:
     """
@@ -28,6 +29,7 @@ class QueryParser:
         'budget', 'size', 'color', etc. Example output:
         {{"category": "electronics", "brand": "Sony", "budget": "500"}}
         """
+        logger.info(f"🔍 Processing user query: {query}")
         
         ai_response = self.openai_service.generate_response(prompt)
 
@@ -35,8 +37,9 @@ class QueryParser:
         try:
             attributes = eval(ai_response)  # Convert AI output to dict
             if isinstance(attributes, dict):
+                logger.info(f"✅ Extracted attributes: {attributes}")
                 return attributes
         except Exception as e:
-            print(f"❌ Error parsing AI response: {e}")
+            logger.error(f"❌ Error parsing AI response: {e}")
 
         return {}  # Default to empty dictionary if parsing fails
