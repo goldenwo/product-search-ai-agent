@@ -15,4 +15,4 @@ repos:
         name: Run tests before push
         entry: pipenv run pytest
         language: system
-        stages: [push]
+        stages: [pre-push]
