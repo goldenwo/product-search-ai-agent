@@ -1,6 +1,8 @@
 from typing import Dict
+
 from src.services.openai_service import OpenAIService
 from src.utils import logger
+
 
 class QueryParser:
     """
@@ -30,7 +32,7 @@ class QueryParser:
         {{"category": "electronics", "brand": "Sony", "budget": "500"}}
         """
         logger.info(f"🔍 Processing user query: {query}")
-        
+
         ai_response = self.openai_service.generate_response(prompt)
 
         # Convert AI response to dictionary

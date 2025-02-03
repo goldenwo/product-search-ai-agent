@@ -1,9 +1,11 @@
 import requests
+
 from src.ai_agent.query_parser import QueryParser
-from src.ai_agent.store_selector import StoreSelector
 from src.ai_agent.ranking import ProductRanker
+from src.ai_agent.store_selector import StoreSelector
 from src.services.faiss_service import FAISSService
-from src.utils import logger, STORE_APIS
+from src.utils import STORE_APIS, logger
+
 
 class ProductFetcher:
     """
@@ -18,12 +20,12 @@ class ProductFetcher:
     def fetch_from_store(self, store_name: str, store_api_url: str, attributes: dict):
         """
         Calls the store API to fetch live product data.
-        
+
         Args:
             store_name (str): Name of the store (Amazon, BestBuy, etc.).
             store_api_url (str): API endpoint for the store.
             attributes (dict): Extracted product attributes.
-        
+
         Returns:
             List[dict]: List of live product data with URLs.
         """

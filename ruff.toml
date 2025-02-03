@@ -1,6 +1,6 @@
-line-length = 88  # Set max line length (default is 88, like Black)
-select = ["E", "F", "I"]  # E = Pycodestyle errors, F = Pyflakes, I = isort
-fixable = ["ALL"]  # Allow auto-fixing of all errors
+line-length = 128  # Set max line length (default is 88, like Black)
+lint.select = ["E", "F", "I"]  # E = Pycodestyle errors, F = Pyflakes, I = isort
+lint.fixable = ["ALL"]  # Allow auto-fixing of all errors
 
 # Exclude specific directories (e.g., virtualenv, migrations, etc.)
 exclude = ["venv", "tests", "migrations"]

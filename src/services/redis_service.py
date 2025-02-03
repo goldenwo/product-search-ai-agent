@@ -1,10 +1,13 @@
-import redis
 import json
-from src.utils.config import REDIS_HOST, REDIS_PORT, REDIS_DB, REDIS_TTL
+
+import redis
+
+from src.utils.config import REDIS_DB, REDIS_HOST, REDIS_PORT, REDIS_TTL
+
 
 class RedisService:
     """Handles Redis caching for product searches."""
-    
+
     def __init__(self):
         self.client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, decode_responses=True)
 

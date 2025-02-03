@@ -1,12 +1,13 @@
 from fastapi import FastAPI
-from src.api.routes import router
 from fastapi.middleware.cors import CORSMiddleware
+
+from src.api.routes import router
 
 # Initialize FastAPI app
 app = FastAPI(
     title="AI-Powered Product Search API",
     description="An AI-driven product search system using OpenAI, FAISS, and live store data.",
-    version="1.0.0"
+    version="1.0.0",
 )
 
 # Allow frontend apps to communicate with the API
@@ -21,6 +22,7 @@ app.add_middleware(
 
 # Include all API routes
 app.include_router(router)
+
 
 @app.get("/")
 def health_check():

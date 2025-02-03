@@ -1,6 +1,7 @@
 import faiss
 import numpy as np
 
+
 class FAISSService:
     """
     Handles FAISS vector search.
@@ -19,7 +20,7 @@ class FAISSService:
         """
         if vectors.shape[1] != self.vector_dimension:
             raise ValueError(f"❌ Vector dimension mismatch! Expected {self.vector_dimension}, got {vectors.shape[1]}")
-        
+
         self.index.add(vectors)
 
     def search_similar_products(self, vector: np.ndarray, top_k: int = 5):
@@ -33,7 +34,7 @@ class FAISSService:
             raise ValueError("❌ FAISS index is empty! Add vectors before searching.")
 
         D, indices = self.index.search(np.array([vector], dtype=np.float32), top_k)
-        
+
         valid_indices = [i for i in indices[0] if i >= 0]
 
         return valid_indices

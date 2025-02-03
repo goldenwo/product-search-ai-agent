@@ -1,14 +1,16 @@
 from typing import Dict, List
+
 from src.services.openai_service import OpenAIService
-from src.utils.config import STORE_APIS
 from src.utils import logger
+from src.utils.config import STORE_APIS
+
 
 class StoreSelector:
     """
     AI-powered store selector that determines the best online stores
     based on product attributes.
     """
-    
+
     def __init__(self):
         self.openai_service = OpenAIService()  # Load AI model
 
@@ -28,7 +30,7 @@ class StoreSelector:
         Stores available: {list(STORE_APIS.keys())}.
         Return a JSON list of store names (e.g., ["Amazon", "BestBuy"]).
         """
-        
+
         logger.info(f"🔍 Selecting stores for attributes: {attributes}")
 
         # Use AI to determine the best stores

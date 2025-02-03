@@ -1,6 +1,9 @@
-from typing import List, Dict
+from typing import Dict, List
+
 import numpy as np
+
 from src.services.faiss_service import FAISSService
+
 
 class ProductRanker:
     """
@@ -27,7 +30,7 @@ class ProductRanker:
         product_vectors = [p["vector"] for p in products if "vector" in p and isinstance(p["vector"], np.ndarray)]
         if not product_vectors:
             return sorted(products, key=lambda p: p.get("price", float("inf")))  # Default: Sort by price if no vectors
-        
+
         product_vectors = np.array(product_vectors, dtype=np.float32)
 
         # Step 2: Ensure vectors are added before searching

@@ -1,5 +1,7 @@
 import openai
+
 from src.utils.config import OPENAI_API_KEY
+
 
 class OpenAIService:
     """
@@ -22,8 +24,10 @@ class OpenAIService:
         try:
             response = self.client.chat.completions.create(
                 model="gpt-4",
-                messages=[{"role": "system", "content": "You are an AI assistant."},
-                          {"role": "user", "content": prompt}]
+                messages=[
+                    {"role": "system", "content": "You are an AI assistant."},
+                    {"role": "user", "content": prompt},
+                ],
             )
             return response["choices"][0]["message"]["content"]
         except Exception as e:

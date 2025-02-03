@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends
-from src.api.dependencies import  get_store_apis
-from src.services.redis_service import RedisService
+
 from src.ai_agent.product_fetcher import ProductFetcher
+from src.api.dependencies import get_store_apis
+from src.services.redis_service import RedisService
 
 router = APIRouter()
 redis_cache = RedisService()  # Initialize Redis
+
 
 @router.get("/")
 def health_check():
@@ -12,6 +14,7 @@ def health_check():
     Health check endpoint to verify API status.
     """
     return {"message": "Product Search AI API is running!"}
+
 
 @router.get("/search")
 def search(
