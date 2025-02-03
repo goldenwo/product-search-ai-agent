@@ -1,6 +1,9 @@
-import pytest
 from unittest.mock import patch
+
+import pytest
+
 from src.ai_agent.store_selector import StoreSelector
+
 
 @pytest.fixture
 def store_selector():
@@ -8,6 +11,7 @@ def store_selector():
     Returns an instance of StoreSelector.
     """
     return StoreSelector()
+
 
 @patch("src.services.openai_service.OpenAIService.generate_response")
 def test_select_best_stores(mock_openai, store_selector):

@@ -1,6 +1,9 @@
-import pytest
 from unittest.mock import patch
+
+import pytest
+
 from src.ai_agent.query_parser import QueryParser
+
 
 @pytest.fixture
 def query_parser():
@@ -8,6 +11,7 @@ def query_parser():
     Returns an instance of QueryParser.
     """
     return QueryParser()
+
 
 @patch("src.services.openai_service.OpenAIService.generate_response")
 def test_extract_product_attributes(mock_openai, query_parser):

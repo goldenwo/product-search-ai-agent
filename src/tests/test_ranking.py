@@ -1,7 +1,9 @@
-import pytest
 import numpy as np
+import pytest
+
 from src.ai_agent.ranking import ProductRanker
 from src.services.faiss_service import FAISSService
+
 
 @pytest.fixture
 def ranker():
@@ -10,6 +12,7 @@ def ranker():
     """
     faiss_service = FAISSService(vector_dimension=3)  # Match test vectors' dimension
     return ProductRanker(faiss_service)
+
 
 def test_rank_products(ranker):
     """
