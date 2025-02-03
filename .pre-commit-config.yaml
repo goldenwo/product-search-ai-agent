@@ -12,6 +12,6 @@ repos:
     hooks:
       - id: pytest
         name: Run tests before push
-        entry: pipenv run pytest
+        entry: bash -c "pipenv install && pipenv run pytest src/tests/"
         language: system
         stages: [pre-push]
