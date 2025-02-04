@@ -22,11 +22,3 @@ app.add_middleware(
 
 # Include all API routes
 app.include_router(router)
-
-
-@app.get("/")
-def health_check():
-    """
-    Health check endpoint to verify if the API is running.
-    """
-    return {"message": "🚀 Product Search API is running!"}
