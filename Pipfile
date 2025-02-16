@@ -46,6 +46,7 @@ virtualenv = "==20.29.1"
 sqlalchemy = "*"
 redis = "*"
 numpy = "==1.26.4"
+tenacity = "*"
 
 [dev-packages]
 pre-commit = "*"

@@ -1,0 +1,10 @@
+{
+	"name": "Amazon",
+	"allowed_params": ["keywords", "category", "min_price", "max_price"],
+	"rate_limit": {
+		"requests_per_second": 5,
+		"max_requests_per_day": 10000
+	},
+	"timeout": 5,
+	"default_api_url": "https://api.amazon.com/search"
+}

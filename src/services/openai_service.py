@@ -1,5 +1,10 @@
-import openai
+"""OpenAI service for generating AI responses and embeddings for product search."""
 
+import numpy as np
+import openai
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
+
+from src.utils import OpenAIServiceError, logger
 from src.utils.config import OPENAI_API_KEY
 
 
@@ -11,25 +16,42 @@ class OpenAIService:
     def __init__(self):
         self.client = openai.OpenAI(api_key=OPENAI_API_KEY)  # Load API key
 
+    @retry(
+        stop=stop_after_attempt(3),  # Retry 3 times
+        wait=wait_fixed(2),  # Wait 2 seconds between retries
+        retry=retry_if_exception_type(openai.OpenAIError),  # Retry only OpenAI errors
+    )
     def generate_response(self, prompt: str) -> str:
         """
-        Sends a prompt to OpenAI and retrieves the response.
-
-        Args:
-            prompt (str): The input prompt for AI.
-
-        Returns:
-            str: The AI-generated response.
+        Generates a response from OpenAI. Retries on failure.
         """
         try:
             response = self.client.chat.completions.create(
                 model="gpt-4",
-                messages=[
-                    {"role": "system", "content": "You are an AI assistant."},
-                    {"role": "user", "content": prompt},
-                ],
+                messages=[{"role": "system", "content": prompt}],
+                temperature=0.7,
+                max_tokens=100,
             )
-            return response["choices"][0]["message"]["content"]
+            content = response.choices[0].message.content
+            if content is None:
+                raise OpenAIServiceError("Empty response from OpenAI")
+            return content
+
+        except openai.OpenAIError as e:
+            logger.error("❌ OpenAI API returned an error: %s", str(e))
+            raise OpenAIServiceError("OpenAI API error") from e
+
         except Exception as e:
-            print(f"❌ OpenAI API error: {e}")
-            return "{}"  # Return an empty JSON object in case of failure
+            logger.error("❌ Unexpected OpenAI error: %s", str(e))
+            raise OpenAIServiceError("Unexpected OpenAI Failure") from e
+
+    def generate_embedding(self, text: str) -> np.ndarray:
+        """
+        Generate embedding vector for text using OpenAI's embedding model.
+        """
+        try:
+            response = self.client.embeddings.create(model="text-embedding-ada-002", input=text)
+            return np.array(response.data[0].embedding)
+        except Exception as e:
+            logger.error("❌ Error generating embedding: %s", str(e))
+            raise OpenAIServiceError("Failed to generate embedding") from e

@@ -9,12 +9,11 @@ from .config import (
     REDIS_HOST,
     REDIS_PORT,
     REDIS_TTL,
-    STORE_APIS,
 )
+from .exceptions import FAISSIndexError, OpenAIServiceError, StoreAPIError
 from .logging import logger
 
 __all__ = [
-    "STORE_APIS",
     "FAISS_VECTOR_DIMENSION",
     "OPENAI_API_KEY",
     "REDIS_HOST",
@@ -22,4 +21,7 @@ __all__ = [
     "REDIS_DB",
     "REDIS_TTL",
     "logger",
+    "OpenAIServiceError",
+    "StoreAPIError",
+    "FAISSIndexError",
 ]

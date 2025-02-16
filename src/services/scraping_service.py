@@ -12,5 +12,5 @@ class ScrapingService:
         if not url:
             return []
 
-        response = requests.get(url, params=attributes)
+        response = requests.get(url, params=attributes, timeout=5)
         return response.json() if response.status_code == 200 else []

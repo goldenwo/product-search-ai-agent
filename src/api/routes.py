@@ -36,7 +36,8 @@ def search(
         return {"query": query, "cached": True, "results": cached_results}
 
     # Step 2: Fetch fresh product data if not cached
-    search_results = ProductFetcher.fetch_products(query, store_apis)
+    fetcher = ProductFetcher()
+    search_results = fetcher.fetch_products(query)
 
     # Step 3: Store results in Redis
     redis_cache.set_cache(cache_key, search_results)

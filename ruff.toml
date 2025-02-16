@@ -1,4 +1,4 @@
-line-length = 128  # Set max line length (default is 88, like Black)
+line-length = 150  # Set max line length (default is 88, like Black)
 
 [lint]
 select = ["E", "F", "I"]  # E = Pycodestyle errors, F = Pyflakes, I = isort
