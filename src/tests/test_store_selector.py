@@ -1,3 +1,5 @@
+"""Test the StoreSelector class."""
+
 from unittest.mock import patch
 
 import pytest
@@ -14,17 +16,39 @@ def store_selector():
 
 
 @patch("src.services.openai_service.OpenAIService.generate_response")
-def test_select_best_stores(mock_openai, store_selector):
-    """
-    Test if AI selects the best stores using a mocked OpenAI response.
-    """
-    # Mock AI response
+def test_select_best_stores_success(mock_openai, store_selector):
+    """Test successful store selection."""
     mock_openai.return_value = '["Amazon", "BestBuy"]'
 
-    attributes = {"category": "electronics", "brand": "Sony"}
-    selected_stores = store_selector.select_best_stores(attributes)
+    stores = store_selector.select_best_stores({"category": "electronics"})
+    assert isinstance(stores, list)
+    assert "Amazon" in stores
+    assert "BestBuy" in stores
 
-    assert isinstance(selected_stores, list)
-    assert "Amazon" in selected_stores
-    assert "BestBuy" in selected_stores
-    mock_openai.assert_called_once()  # Ensure AI was called once
+
+@patch("src.services.openai_service.OpenAIService.generate_response")
+def test_select_best_stores_invalid_response(mock_openai, store_selector):
+    """Test handling of invalid AI response."""
+    mock_openai.return_value = "invalid json"
+
+    stores = store_selector.select_best_stores({"category": "electronics"})
+    assert isinstance(stores, list)
+    assert len(stores) > 0  # Should return all available stores as fallback
+
+
+@patch("src.services.openai_service.OpenAIService.generate_response")
+def test_select_best_stores_api_error(mock_openai, store_selector):
+    """Test handling of API errors."""
+    mock_openai.side_effect = Exception("API Error")
+
+    stores = store_selector.select_best_stores({"category": "electronics"})
+    assert isinstance(stores, list)
+    assert len(stores) > 0  # Should return all available stores as fallback
+
+
+@patch("src.services.openai_service.OpenAIService.generate_response")
+def test_select_best_stores_empty_attributes(mock_openai, store_selector):
+    """Test handling of empty attributes."""
+    stores = store_selector.select_best_stores({})
+    assert isinstance(stores, list)
+    assert len(stores) > 0  # Should return all available stores

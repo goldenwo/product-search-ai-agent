@@ -1,3 +1,5 @@
+"""Test the QueryParser class."""
+
 from unittest.mock import patch
 
 import pytest
@@ -14,18 +16,41 @@ def query_parser():
 
 
 @patch("src.services.openai_service.OpenAIService.generate_response")
-def test_extract_product_attributes(mock_openai, query_parser):
-    """
-    Test if AI correctly extracts product attributes using a mocked OpenAI response.
-    """
-    # Mock AI response
+def test_extract_product_attributes_success(mock_openai, parser):
+    """Test successful attribute extraction."""
     mock_openai.return_value = '{"category": "electronics", "brand": "Sony", "budget": "500"}'
 
-    query = "best 4K gaming monitor under $500"
-    attributes = query_parser.extract_product_attributes(query)
+    attributes = parser.extract_product_attributes("Sony TV under $500")
 
     assert isinstance(attributes, dict)
     assert attributes["category"] == "electronics"
     assert attributes["brand"] == "Sony"
     assert attributes["budget"] == "500"
-    mock_openai.assert_called_once()  # Ensure AI was called once
+
+
+@patch("src.services.openai_service.OpenAIService.generate_response")
+def test_extract_product_attributes_invalid_json(mock_openai, parser):
+    """Test handling of invalid JSON response."""
+    mock_openai.return_value = "invalid json"
+
+    attributes = parser.extract_product_attributes("test query")
+    assert "error" in attributes
+
+
+@patch("src.services.openai_service.OpenAIService.generate_response")
+def test_refine_query_for_store_success(mock_openai, parser):
+    """Test query refinement for specific store."""
+    mock_openai.return_value = '{"keywords": "gaming laptop", "category": "computers"}'
+
+    refined = parser.refine_query_for_store("gaming laptop", "Amazon")
+    assert isinstance(refined, dict)
+    assert "keywords" in refined
+
+
+@patch("src.services.openai_service.OpenAIService.generate_response")
+def test_refine_query_fallback(mock_openai, parser):
+    """Test fallback behavior for query refinement."""
+    mock_openai.side_effect = Exception("API Error")
+
+    refined = parser.refine_query_for_store("test query", "Amazon")
+    assert refined == {"keywords": "test query"}

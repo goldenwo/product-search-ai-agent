@@ -15,12 +15,12 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # Store API URLs - dynamically loaded from environment
 def get_store_api_url(store_name: str) -> str:
-    """Get store API URL from environment with fallback."""
+    """Get store API URL from environment with fallback to empty string."""
     return os.getenv(f"{store_name.upper()}_API_URL", "")
 
 
 def get_store_api_key(store_name: str) -> str:
-    """Get store API key from environment."""
+    """Get store API key from environment with fallback to empty string."""
     return os.getenv(f"{store_name.upper()}_API_KEY", "")
 
 
