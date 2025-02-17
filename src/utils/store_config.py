@@ -54,8 +54,8 @@ class StoreConfig:
             raise ValueError(f"No configuration found for store: {store}")
 
         store_config = self.store_configs[store].copy()
-        # Add dynamic values from environment
-        store_config["api_url"] = config.get_store_api_url(store) or store_config.get("default_api_url")
+        # Add dynamic values from environment, falling back to default_api_url
+        store_config["api_url"] = config.get_store_api_url(store, default_url=store_config.get("default_api_url"))
         store_config["api_key"] = config.get_store_api_key(store)
 
         return store_config

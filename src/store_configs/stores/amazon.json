@@ -1,5 +1,6 @@
 {
 	"name": "Amazon",
+	"default_api_url": "https://api.amazon.com/v1/search",
 	"allowed_params": ["keywords", "category", "min_price", "max_price"],
 	"field_mapping": {
 		"id": "asin",

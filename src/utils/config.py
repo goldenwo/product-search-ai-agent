@@ -1,6 +1,7 @@
 """Configuration management module for environment variables and application settings."""
 
 import os
+from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -13,10 +14,14 @@ FAISS_VECTOR_DIMENSION = int(os.getenv("FAISS_VECTOR_DIMENSION", "128"))
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 
-# Store API URLs - dynamically loaded from environment
-def get_store_api_url(store_name: str) -> str:
-    """Get store API URL from environment with fallback to empty string."""
-    return os.getenv(f"{store_name.upper()}_API_URL", "")
+def get_store_api_url(store_name: str, default_url: Optional[str] = None) -> str:
+    """
+    Get store API URL with fallback chain:
+    1. Environment variable
+    2. Provided default URL
+    3. Empty string
+    """
+    return os.getenv(f"{store_name.upper()}_API_URL", "") or default_url or ""
 
 
 def get_store_api_key(store_name: str) -> str:

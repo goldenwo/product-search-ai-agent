@@ -1,5 +1,6 @@
 {
 	"name": "BestBuy",
+	"default_api_url": "https://api.bestbuy.com/v1/products",
 	"allowed_params": ["categoryId", "price.min", "price.max"],
 	"field_mapping": {
 		"id": "sku",
