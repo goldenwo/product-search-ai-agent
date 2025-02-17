@@ -27,13 +27,13 @@ class OpenAIService:
         """
         try:
             response = self.client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-4o-mini",
                 messages=[{"role": "system", "content": prompt}],
                 temperature=0.7,
                 max_tokens=100,
             )
             content = response.choices[0].message.content
-            if content is None:
+            if not content:
                 raise OpenAIServiceError("Empty response from OpenAI")
             return content
 
@@ -46,12 +46,13 @@ class OpenAIService:
             raise OpenAIServiceError("Unexpected OpenAI Failure") from e
 
     def generate_embedding(self, text: str) -> np.ndarray:
-        """
-        Generate embedding vector for text using OpenAI's embedding model.
-        """
+        """Generate embedding vector for text using OpenAI's embedding model."""
         try:
-            response = self.client.embeddings.create(model="text-embedding-ada-002", input=text)
+            response = self.client.embeddings.create(
+                model="text-embedding-3-small",
+                input=text[:8191],  # OpenAI has a token limit
+            )
             return np.array(response.data[0].embedding)
-        except Exception as e:
+        except (openai.OpenAIError, ValueError, TypeError) as e:
             logger.error("❌ Error generating embedding: %s", str(e))
             raise OpenAIServiceError("Failed to generate embedding") from e

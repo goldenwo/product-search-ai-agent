@@ -57,3 +57,8 @@ class FAISSService:
         _, indices = self.index.search(vector, top_k)  # type: ignore[call-arg] # Perform similarity search
 
         return [i for i in indices[0] if i >= 0]  # Filter valid results
+
+    def __del__(self):
+        """Clean up FAISS index when service is destroyed."""
+        if hasattr(self, "index"):
+            self.index.reset()  # Clear the index

@@ -1,11 +1,11 @@
 {
 	"name": "BestBuy",
-	"allowed_params": ["term", "categoryId", "price_range", "brand", "condition"],
+	"allowed_params": ["categoryId", "price.min", "price.max"],
 	"api_version": "v1",
 	"rate_limit": {
-		"requests_per_minute": 60
+		"requests_per_second": 3
 	},
-	"timeout": 3,
+	"timeout": 5,
 	"required_headers": {
 		"apiKey": "ENV:BESTBUY_API_KEY"
 	}

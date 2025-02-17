@@ -1,5 +1,6 @@
 """Product fetcher service that coordinates the AI-powered product search workflow."""
 
+import time
 from typing import Dict
 
 import numpy as np
@@ -43,6 +44,10 @@ class ProductFetcher:
         try:
             # Get store config including API URL and key
             store_config = self.store_config.get_store_config(store_name)
+            rate_limit = store_config.get("rate_limit", {})
+
+            if "requests_per_second" in rate_limit:
+                time.sleep(1 / rate_limit["requests_per_second"])  # Basic rate limiting
 
             # Validate query params against allowed params
             allowed_params = self.store_config.get_allowed_params(store_name)
@@ -67,13 +72,13 @@ class ProductFetcher:
         return []
 
     def fetch_products(self, query: str):
-        """
-        Implements the complete AI-powered product search flow.
-        """
+        """Implements the complete AI-powered product search flow."""
         logger.info("🔍 Starting product search for query: %s", query)
 
         # 1. Parse query for attributes
         attributes = self.query_parser.extract_product_attributes(query)
+        if "error" in attributes:
+            return []
 
         # 2. Select relevant stores
         selected_stores = self.store_selector.select_best_stores(attributes)
@@ -83,6 +88,9 @@ class ProductFetcher:
         all_products = []
         for store in selected_stores:
             refined_query = self.query_parser.refine_query_for_store(query, store)
+            if not refined_query:  # Skip store if refinement failed
+                logger.warning("⚠️ Skipping %s due to query refinement failure", store)
+                continue
             store_products = self.fetch_from_store(store, refined_query)
             all_products.extend(store_products)
 

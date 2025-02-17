@@ -11,17 +11,9 @@ class ScrapingService:
         self.store_config = StoreConfig()
 
     def scrape_product(self, url: str, store: str) -> dict:
-        """
-        Scrape product data from a store URL.
-
-        Args:
-            url: The product URL to scrape
-            store: The store name (e.g., "amazon", "bestbuy")
-        """
+        """Scrape product data from a store URL."""
         try:
             store_config = self.store_config.get_store_config(store.lower())
-            if not url:
-                raise ValueError("Missing product URL")
             # TODO: Implement actual scraping logic
             return {"url": url, "store": store, "timeout": store_config.get("timeout", 5)}
         except Exception as e:
