@@ -29,6 +29,8 @@ class StoreSelector:
             List[str]: A list of the best online stores for the product.
         """
         available_stores = [config["name"] for config in self.store_config.store_configs.values()]
+        if not available_stores:
+            return []
 
         prompt = f"""
         Given the following product attributes: {attributes},
@@ -39,16 +41,19 @@ class StoreSelector:
 
         logger.info("🔍 Selecting stores for attributes: %s", attributes)
 
-        # Use AI to determine the best stores
-        # Extract store list from AI response
         try:
             ai_response = self.openai_service.generate_response(prompt)
             selected_stores = json.loads(ai_response)  # Convert string output to a list
-            if isinstance(selected_stores, list) and all(store in available_stores for store in selected_stores):
-                logger.info("✅ AI selected stores: %s", selected_stores)
-                return selected_stores
-        except OpenAIServiceError as e:
+
+            # Filter to only include valid stores from AI response
+            valid_stores = [store for store in selected_stores if store in available_stores]
+
+            if valid_stores:  # Return valid stores if any exist
+                logger.info("✅ AI selected stores: %s", valid_stores)
+                return valid_stores
+
+        except (json.JSONDecodeError, OpenAIServiceError) as e:
             logger.error("❌ Error selecting stores: %s", e)
 
-        # Default: Use all stores if AI response is invalid
+        # Default: Use all stores only if no valid stores were selected
         return available_stores

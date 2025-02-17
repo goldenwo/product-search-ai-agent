@@ -28,6 +28,10 @@ class QueryParser:
         Returns:
             Dict[str, str]: Extracted attributes (e.g., category, brand, budget).
         """
+        if not query.strip():
+            logger.error("❌ Empty query provided")
+            return {"error": "Empty query"}
+
         prompt = f"""
         Extract key product attributes from the following search query:
         "{query}"
@@ -38,7 +42,6 @@ class QueryParser:
         """
         logger.info("🔍 Processing user query: %s", query)
 
-        # Convert AI response to dictionary
         try:
             ai_response = self.openai_service.generate_response(prompt)
             attributes = json.loads(ai_response)  # Convert AI output to dict
@@ -59,6 +62,14 @@ class QueryParser:
         """
         Refines the search query for a specific store's API format.
         """
+        if not query.strip():
+            logger.error("❌ Empty query provided")
+            return {"keywords": ""}
+
+        if not store.strip():
+            logger.error("❌ Empty store name provided")
+            return {"keywords": query}
+
         allowed_params = self.store_config.get_allowed_params(store)
 
         prompt = f"""
