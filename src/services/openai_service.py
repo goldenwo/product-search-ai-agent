@@ -1,5 +1,7 @@
 """OpenAI service for generating AI responses and embeddings for product search."""
 
+from typing import List, Union
+
 import numpy as np
 import openai
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
@@ -45,14 +47,22 @@ class OpenAIService:
             logger.error("❌ Unexpected OpenAI error: %s", str(e))
             raise OpenAIServiceError("Unexpected OpenAI Failure") from e
 
-    def generate_embedding(self, text: str) -> np.ndarray:
-        """Generate embedding vector for text using OpenAI's embedding model."""
+    def generate_embedding(self, text: Union[str, List[str]]) -> np.ndarray:
+        """
+        Generate embedding vector(s) for text using OpenAI's embedding model.
+        Returns a numpy array of shape (n_texts, embedding_dim).
+        For single texts, returns array of shape (1, embedding_dim).
+        """
         try:
+            # Convert single string to list for consistent handling
+            texts = [text] if isinstance(text, str) else text
             response = self.client.embeddings.create(
                 model="text-embedding-3-small",
-                input=text[:8191],  # OpenAI has a token limit
+                input=texts,
             )
-            return np.array(response.data[0].embedding)
+            # Always return 2D array of shape (n_texts, embedding_dim)
+            return np.array([item.embedding for item in response.data])
+
         except (openai.OpenAIError, ValueError, TypeError) as e:
             logger.error("❌ Error generating embedding: %s", str(e))
             raise OpenAIServiceError("Failed to generate embedding") from e

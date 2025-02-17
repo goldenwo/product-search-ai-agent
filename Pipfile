@@ -47,6 +47,7 @@ sqlalchemy = "*"
 redis = "*"
 numpy = "==1.26.4"
 tenacity = "*"
+aiohttp = "*"
 
 [dev-packages]
 pre-commit = "*"

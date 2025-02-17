@@ -38,7 +38,7 @@ async def search(query: str):
 
         # Step 2: Fetch fresh product data
         fetcher = ProductFetcher()
-        search_results = fetcher.fetch_products(query)
+        search_results = await fetcher.fetch_products(query)
 
         if not search_results:
             return {"query": query, "results": [], "message": "No products found"}

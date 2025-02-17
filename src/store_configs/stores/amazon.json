@@ -1,6 +1,16 @@
 {
 	"name": "Amazon",
 	"allowed_params": ["keywords", "category", "min_price", "max_price"],
+	"field_mapping": {
+		"id": "asin",
+		"title": "title",
+		"price": "listPrice",
+		"url": "productUrl",
+		"description": "description",
+		"category": "category",
+		"brand": "brand",
+		"image_url": "imageUrl"
+	},
 	"rate_limit": {
 		"requests_per_second": 5,
 		"max_requests_per_day": 10000

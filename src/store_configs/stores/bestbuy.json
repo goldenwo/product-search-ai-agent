@@ -1,6 +1,16 @@
 {
 	"name": "BestBuy",
 	"allowed_params": ["categoryId", "price.min", "price.max"],
+	"field_mapping": {
+		"id": "sku",
+		"title": "name",
+		"price": "salePrice",
+		"url": "productUrl",
+		"description": "description",
+		"category": "category",
+		"brand": "brand",
+		"image_url": "imageUrl"
+	},
 	"api_version": "v1",
 	"rate_limit": {
 		"requests_per_second": 3
