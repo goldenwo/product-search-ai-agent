@@ -1,6 +1,7 @@
 """Pydantic models for user authentication and data validation."""
 
 from pydantic import BaseModel, EmailStr
+from pydantic.config import ConfigDict
 
 
 class UserLogin(BaseModel):
@@ -41,18 +42,11 @@ class UserInDB(BaseModel):
         hashed_password: Bcrypt hashed password
     """
 
+    model_config = ConfigDict(from_attributes=True)
+
     email: EmailStr
     username: str
     hashed_password: str
-
-    class Config:
-        """
-        Configuration for Pydantic model.
-
-        Allows conversion from SQLAlchemy model.
-        """
-
-        from_attributes = True  # Allows conversion from SQLAlchemy model
 
 
 class Token(BaseModel):
@@ -64,6 +58,8 @@ class Token(BaseModel):
         refresh_token: JWT refresh token
         token_type: Token type (default is "bearer")
     """
+
+    model_config = ConfigDict(json_schema_extra={"example": {"access_token": "eyJ0...", "refresh_token": "eyJ1...", "token_type": "bearer"}})
 
     access_token: str
     refresh_token: str

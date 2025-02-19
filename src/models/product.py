@@ -3,7 +3,7 @@
 from decimal import Decimal
 from typing import Optional
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 
 class Product(BaseModel):
@@ -23,6 +23,14 @@ class Product(BaseModel):
         relevance_score: Optional search relevance score
     """
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {"id": "123", "title": "Gaming Laptop", "price": "999.99", "store": "amazon", "url": "https://amazon.com/p/123"}
+        },
+        from_attributes=True,
+        arbitrary_types_allowed=True,
+    )
+
     id: str = Field(..., description="Unique product identifier")
     title: str = Field(..., description="Product name/title")
     price: Decimal = Field(..., description="Price in decimal format")
@@ -34,10 +42,3 @@ class Product(BaseModel):
     brand: Optional[str] = Field(default=None, description="Brand name")
     image_url: Optional[HttpUrl] = Field(default=None, description="Product image URL")
     relevance_score: Optional[float] = Field(default=None, description="Search relevance score")
-
-    class Config:
-        """Pydantic model configuration."""
-
-        json_encoders = {
-            Decimal: str  # Convert Decimal to string for JSON serialization
-        }
