@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 import pytest
+from pydantic import HttpUrl  # Change from AnyHttpUrl to HttpUrl
 
 from src.ai_agent.product_fetcher import ProductFetcher
 from src.models.product import Product
@@ -19,11 +20,12 @@ def mock_product() -> Product:
         title="Test Product",
         price=Decimal("99.99"),
         store="amazon",
-        url="https://amazon.com/p/123",
+        url=HttpUrl("https://amazon.com/p/123"),  # Use HttpUrl
         description="Test description",
         category="electronics",
         brand="TestBrand",
-        image_url="https://images.amazon.com/123.jpg",
+        image_url=HttpUrl("https://images.amazon.com/123.jpg"),  # Use HttpUrl
+        relevance_score=0.95,
     )
 
 

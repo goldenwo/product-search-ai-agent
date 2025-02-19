@@ -1,15 +1,24 @@
-"""Configuration management for store API parameters and endpoints."""
+"""Store configuration management with API settings and parameters."""
 
 import json
 from pathlib import Path
-from typing import Dict, Set
+from typing import Any, Dict, List
 
 import src.utils.config as config  # Import as module
 from src.utils import logger
 
 
 class StoreConfig:
-    """Manages store API configurations from JSON files."""
+    """
+    Manages store-specific configurations and API settings.
+
+    Attributes:
+        store_configs: Dictionary of store configurations
+            - API URLs
+            - Authentication
+            - Rate limits
+            - Parameter mappings
+    """
 
     def __init__(self):
         # Move configs inside src directory
@@ -41,21 +50,46 @@ class StoreConfig:
             except (IOError, OSError) as e:
                 logger.error("❌ Error reading %s: %s", config_file.name, e)
 
-    def get_allowed_params(self, store: str) -> Set[str]:
-        """Get allowed parameters for a store's API."""
-        if store not in self.store_configs:
-            return {"keywords"}
-        return set(self.store_configs[store].get("allowed_params", ["keywords"]))
+    def get_allowed_params(self, store_name: str) -> List[str]:
+        """
+        Get allowed API parameters for store.
 
-    def get_store_config(self, store: str) -> Dict:
-        """Get complete configuration for a store."""
-        store = store.lower()
-        if store not in self.store_configs:
-            raise ValueError(f"No configuration found for store: {store}")
+        Args:
+            store_name: Name of store to get parameters for
 
-        store_config = self.store_configs[store].copy()
+        Returns:
+            List[str]: List of valid parameter names for store API
+        """
+        if store_name not in self.store_configs:
+            return ["keywords"]
+        return list(self.store_configs[store_name].get("allowed_params", ["keywords"]))
+
+    def get_store_config(self, store_name: str) -> Dict[str, Any]:
+        """
+        Get configuration for specific store.
+
+        Args:
+            store_name: Name of store to get config for
+
+        Returns:
+            Dict[str, Any]: Store configuration including API details
+            Empty dict if store not found
+
+        Example:
+            {
+                "api_url": "https://api.store.com",
+                "api_key": "key123",
+                "rate_limit": {"requests_per_second": 5},
+                "timeout": 10
+            }
+        """
+        store_name = store_name.lower()
+        if store_name not in self.store_configs:
+            raise ValueError(f"No configuration found for store: {store_name}")
+
+        store_config = self.store_configs[store_name].copy()
         # Add dynamic values from environment, falling back to default_api_url
-        store_config["api_url"] = config.get_store_api_url(store, default_url=store_config.get("default_api_url"))
-        store_config["api_key"] = config.get_store_api_key(store)
+        store_config["api_url"] = config.get_store_api_url(store_name, default_url=store_config.get("default_api_url"))
+        store_config["api_key"] = config.get_store_api_key(store_name)
 
         return store_config

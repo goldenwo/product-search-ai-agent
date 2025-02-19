@@ -1,62 +1,88 @@
-"""FAISS vector search service for efficient similarity-based product recommendations."""
+"""FAISS service for efficient similarity search of product vectors."""
+
+from typing import Any, List, Optional
 
 import faiss
 import numpy as np
 
-from src.utils import FAISS_VECTOR_DIMENSION, logger
+from src.utils import FAISSIndexError, logger
+from src.utils.config import FAISS_VECTOR_DIMENSION
 
 
 class FAISSService:
     """
-    Handles FAISS vector search for real-time AI-based product recommendations.
-    Optimized for fast, temporary in-memory search (NO persistent storage).
+    Service for vector similarity search using FAISS.
+
+    Attributes:
+        vector_dimension: Dimension of embedding vectors
+        index: FAISS index for similarity search
     """
 
-    def __init__(self):
+    def __init__(self, vector_dimension: Optional[int] = None):
         """
-        Initializes FAISS with an in-memory index (IndexFlatL2).
+        Initialize FAISS index.
+
+        Args:
+            vector_dimension: Optional dimension override (defaults to config)
+
+        Raises:
+            FAISSIndexError: If index initialization fails
         """
-        if FAISS_VECTOR_DIMENSION <= 0:
-            raise ValueError("❌ Vector dimension must be greater than 0")
+        self.vector_dimension = vector_dimension or FAISS_VECTOR_DIMENSION
+        try:
+            self.index: Any = faiss.IndexFlatL2(self.vector_dimension)
+        except Exception as e:
+            logger.error("❌ FAISS index initialization failed: %s", str(e))
+            raise FAISSIndexError("Failed to initialize FAISS index") from e
 
-        self.vector_dimension = FAISS_VECTOR_DIMENSION
-        self.index = faiss.IndexFlatL2(self.vector_dimension)  # Always use exact search
-
-    def add_vectors(self, vectors: np.ndarray):
+    def add_vectors(self, vectors: np.ndarray) -> None:
         """
-        Adds vectors to FAISS.
+        Add vectors to FAISS index.
+
+        Args:
+            vectors: Array of vectors to add, shape (n_vectors, vector_dimension)
+
+        Raises:
+            FAISSIndexError: If vectors have wrong dimension or addition fails
+            ValueError: If vectors array is empty
         """
-        if not isinstance(vectors, np.ndarray):
-            raise TypeError("❌ Input vectors must be a NumPy array")
-
-        if vectors.ndim == 1:  # Ensure 2D shape
-            vectors = np.expand_dims(vectors, axis=0)
-
-        vectors = vectors.astype(np.float32)  # Convert to float32
+        if vectors.size == 0:
+            raise ValueError("Empty vector array")
 
         if vectors.shape[1] != self.vector_dimension:
-            raise ValueError(f"❌ Vector dimension mismatch! Expected {self.vector_dimension}, got {vectors.shape[1]}")
+            raise FAISSIndexError(f"FAISS expects {self.vector_dimension}-dimensional vectors")
 
-        # pylint: disable = no-value-for-parameter
-        self.index.add(vectors)  # type: ignore[call-arg] # Directly add to FAISS
+        try:
+            vectors_f32: np.ndarray = vectors.astype(np.float32)
+            self.index.add(vectors_f32)  # pylint: disable=E1120
+        except Exception as e:
+            logger.error("❌ Failed to add vectors to FAISS: %s", str(e))
+            raise FAISSIndexError("Failed to add vectors to index") from e
 
-    def search_similar_products(self, vector: np.ndarray, top_k: int = 5):
+    def search_similar(self, query_vector: np.ndarray, k: int = 5) -> List[int]:
         """
-        Searches for top-K most similar products using FAISS.
+        Search for k most similar vectors.
+
+        Args:
+            query_vector: Query vector, shape (vector_dimension,)
+            k: Number of similar vectors to return
+
+        Returns:
+            List[int]: Indices of k most similar vectors
+
+        Raises:
+            FAISSIndexError: If search fails or vector has wrong dimension
         """
-        if self.index.ntotal == 0:
-            logger.warning("⚠️ FAISS index is empty! Add vectors before searching.")
-            return None
+        if query_vector.shape != (self.vector_dimension,):
+            raise FAISSIndexError(f"Query vector must be {self.vector_dimension}-dimensional")
 
-        if vector.ndim == 1:
-            vector = np.expand_dims(vector, axis=0)  # Ensure 2D input
-
-        vector = vector.astype(np.float32)  # Convert to float32
-
-        # pylint: disable = no-value-for-parameter
-        _, indices = self.index.search(vector, top_k)  # type: ignore[call-arg] # Perform similarity search
-
-        return [i for i in indices[0] if i >= 0]  # Filter valid results
+        try:
+            query_f32: np.ndarray = query_vector.reshape(1, -1).astype(np.float32)
+            _distances, indices = self.index.search(query_f32, k)  # pylint: disable=E1120
+            return indices[0].tolist()
+        except Exception as e:
+            logger.error("❌ FAISS search failed: %s", str(e))
+            raise FAISSIndexError("Failed to perform similarity search") from e
 
     def __del__(self):
         """Clean up FAISS index when service is destroyed."""

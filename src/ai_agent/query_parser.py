@@ -1,7 +1,7 @@
-"""Module for parsing natural language queries into structured product attributes using AI."""
+"""Natural language query parser for product search refinement."""
 
 import json
-from typing import Dict
+from typing import Dict, Optional
 
 from src.services.openai_service import OpenAIService
 from src.utils import OpenAIServiceError, logger
@@ -10,8 +10,13 @@ from src.utils.store_config import StoreConfig
 
 class QueryParser:
     """
-    AI-powered query parser that extracts structured product attributes
-    from a user's natural language query.
+    Parses and refines natural language search queries.
+
+    Handles:
+    - Attribute extraction
+    - Store-specific query formatting
+    - Price range parsing
+    - Category detection
     """
 
     def __init__(self):
@@ -20,13 +25,22 @@ class QueryParser:
 
     def extract_product_attributes(self, query: str) -> Dict[str, str]:
         """
-        Extracts key product attributes that help determine the best stores for a query.
+        Extract structured attributes from natural language query.
 
-        Focuses on high-level attributes like:
-        - Product category (electronics, clothing, etc.)
-        - Price range (budget, premium, etc.)
-        - Brand specificity (if looking for specific brands)
-        - Product type (physical, digital, services)
+        Args:
+            query: Raw search query from user
+
+        Returns:
+            Dict[str, str]: Extracted attributes (category, price_range, brand, etc.)
+
+        Example:
+            "cheap gaming laptop under $1000" ->
+            {
+                "category": "laptop",
+                "use_case": "gaming",
+                "price_max": "1000",
+                "price_qualifier": "under"
+            }
         """
         logger.info("🔍 Extracting store selection attributes from: %s", query)
 
@@ -66,17 +80,35 @@ class QueryParser:
             logger.error("❌ Attribute extraction failed: %s", str(e))
             return {"error": str(e)}
 
-    def refine_query_for_store(self, query: str, store: str) -> Dict[str, str]:
-        """Refines the search query for a specific store's API format."""
-        if not store.strip():
-            logger.error("❌ Empty store name provided")
-            return {}
+    def refine_query_for_store(self, query: str, store_name: str) -> Optional[Dict[str, str]]:
+        """
+        Adapt query parameters for specific store APIs.
 
-        allowed_params = self.store_config.get_allowed_params(store)
+        Args:
+            query: Original search query
+            store_name: Target store name
+
+        Returns:
+            Optional[Dict[str, str]]: Store-specific query parameters
+            None if store is not supported
+
+        Example:
+            ("gaming laptop", "amazon") ->
+            {
+                "keywords": "gaming laptop",
+                "department": "computers",
+                "sort": "rating"
+            }
+        """
+        if not store_name.strip():
+            logger.error("❌ Empty store name provided")
+            return None
+
+        allowed_params = self.store_config.get_allowed_params(store_name)
 
         prompt = f"""You are a store API specialist. Convert this search query into API parameters:
         Query: "{query}"
-        Store: {store}
+        Store: {store_name}
 
         RULES:
         1. Return ONLY a valid JSON object
@@ -97,11 +129,11 @@ class QueryParser:
 
             if not validated_query:
                 logger.warning("⚠️ No valid parameters in refined query")
-                return {}
+                return None
 
-            logger.info("✅ Refined query for %s: %s", store, validated_query)
+            logger.info("✅ Refined query for %s: %s", store_name, validated_query)
             return validated_query
 
         except (OpenAIServiceError, json.JSONDecodeError) as e:
             logger.error("❌ Error refining query: %s", str(e))
-            return {}
+            return None

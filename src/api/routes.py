@@ -1,4 +1,4 @@
-"""API routes for the product search AI."""
+"""API routes for AI-powered product search with authentication."""
 
 import re
 
@@ -20,13 +20,37 @@ security = HTTPBearer()
 def health_check():
     """
     Health check endpoint to verify API status.
+
+    Returns:
+        dict: Status message indicating API is running
     """
     return {"message": "Product Search AI API is running!"}
 
 
 @router.get("/search")
 async def search(query: str, auth=Depends(security)):
-    """AI-powered product search with authentication."""
+    """
+    AI-powered product search with authentication and caching.
+
+    Args:
+        query: Search query string
+        auth: JWT bearer token for authentication
+
+    Returns:
+        dict: Search results with metadata
+            - query: Original search query
+            - cached: Whether results came from cache
+            - results: List of matched products
+            - user: Email of authenticated user
+
+    Raises:
+        HTTPException:
+            - 401: Invalid authentication token
+            - 400: Invalid search query
+        OpenAIServiceError: If AI service fails
+        FAISSIndexError: If vector search fails
+        StoreAPIError: If store API calls fail
+    """
     # Verify token and get user
     try:
         email = auth_service.verify_token(auth.credentials)

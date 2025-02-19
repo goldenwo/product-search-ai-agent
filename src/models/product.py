@@ -1,35 +1,43 @@
-"""Shared product model for consistent data across all store integrations."""
+"""Product data models for consistent representation across stores."""
 
-from dataclasses import dataclass
 from decimal import Decimal
 from typing import Optional
 
+from pydantic import BaseModel, Field, HttpUrl
 
-@dataclass
-class Product:
+
+class Product(BaseModel):
     """
-    Common product model that all store responses must map to.
+    Normalized product model for consistent handling across stores.
 
-    Required fields:
-    - id: Unique identifier within the store
-    - title: Product name/title
-    - price: Current price in decimal format
-    - store: Store identifier (e.g., "amazon", "bestbuy")
-    - url: Direct product URL
-
-    Optional fields:
-    - description: Full product description
-    - category: Product category
-    - brand: Manufacturer/brand name
-    - image_url: Primary product image URL
+    Attributes:
+        id: Unique product identifier
+        title: Product name/title
+        price: Price in decimal format
+        store: Store name (e.g., "amazon", "bestbuy")
+        url: Product page URL
+        description: Optional product description
+        category: Optional product category
+        brand: Optional brand name
+        image_url: Optional product image URL
+        relevance_score: Optional search relevance score
     """
 
-    id: str
-    title: str
-    price: Decimal
-    store: str
-    url: str
-    description: Optional[str] = None
-    category: Optional[str] = None
-    brand: Optional[str] = None
-    image_url: Optional[str] = None
+    id: str = Field(..., description="Unique product identifier")
+    title: str = Field(..., description="Product name/title")
+    price: Decimal = Field(..., description="Price in decimal format")
+    store: str = Field(..., description="Store name (e.g., 'amazon', 'bestbuy')")
+    url: HttpUrl = Field(..., description="Product page URL")
+
+    description: Optional[str] = Field(default=None, description="Product description")
+    category: Optional[str] = Field(default=None, description="Product category")
+    brand: Optional[str] = Field(default=None, description="Brand name")
+    image_url: Optional[HttpUrl] = Field(default=None, description="Product image URL")
+    relevance_score: Optional[float] = Field(default=None, description="Search relevance score")
+
+    class Config:
+        """Pydantic model configuration."""
+
+        json_encoders = {
+            Decimal: str  # Convert Decimal to string for JSON serialization
+        }

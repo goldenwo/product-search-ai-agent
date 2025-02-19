@@ -1,8 +1,8 @@
-"""Product fetcher service that coordinates the AI-powered product search workflow."""
+"""AI-powered product fetcher with caching and vector search."""
 
 import asyncio
 from decimal import Decimal
-from typing import Dict, List
+from typing import Any, Dict, List
 
 import aiohttp
 import numpy as np
@@ -20,7 +20,14 @@ from src.utils.store_config import StoreConfig
 
 class ProductFetcher:
     """
-    Fetches and ranks products following the AI-powered search flow.
+    Fetches and ranks products using AI embeddings and FAISS.
+
+    Attributes:
+        redis_cache: Redis caching service
+        openai_service: OpenAI API service
+        faiss_service: FAISS vector search service
+        query_parser: Query parsing service
+        store_selector: Store selection service
     """
 
     def __init__(self):
@@ -32,7 +39,20 @@ class ProductFetcher:
         self.redis_cache = RedisService()
 
     async def fetch_from_store(self, store_name: str, refined_query: Dict[str, str]) -> List[Product]:
-        """Fetch products from store API with refined query."""
+        """
+        Fetch products from store API with caching.
+
+        Args:
+            store_name: Name of store to fetch from
+            refined_query: Parsed and refined search query
+
+        Returns:
+            List[Product]: List of normalized product data
+
+        Raises:
+            RequestException: If API request fails
+            ValueError: If response format is invalid
+        """
         store_name = store_name.lower()
         cache_key = f"store:{store_name}:{hash(frozenset(refined_query.items()))}"
 
@@ -119,8 +139,26 @@ class ProductFetcher:
             # Return zero vectors if embedding fails
             return np.zeros((len(products), FAISS_VECTOR_DIMENSION))
 
-    async def fetch_products(self, query: str):
-        """Implements the complete AI-powered product search flow."""
+    async def fetch_products(self, query: str) -> List[Dict[str, Any]]:
+        """
+        Complete AI-powered product search flow.
+
+        1. Parse query and select stores
+        2. Fetch products from stores
+        3. Generate embeddings
+        4. Rank using FAISS
+        5. Cache results
+
+        Args:
+            query: User's search query
+
+        Returns:
+            List[Dict[str, Any]]: Ranked product results with scores
+
+        Raises:
+            OpenAIServiceError: If AI service fails
+            FAISSIndexError: If vector search fails
+        """
         if not isinstance(query, str) or not query.strip():
             logger.error("❌ Invalid query provided")
             return []
@@ -163,7 +201,7 @@ class ProductFetcher:
                 query_embedding = self.openai_service.generate_embedding([query])
 
                 self.faiss_service.add_vectors(product_embeddings)
-                similar_indices = self.faiss_service.search_similar_products(query_embedding)
+                similar_indices = self.faiss_service.search_similar(query_embedding)
 
                 if not similar_indices:
                     return all_products[:10]

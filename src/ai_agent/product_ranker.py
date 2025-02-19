@@ -1,3 +1,5 @@
+from typing import Any, Dict, List
+
 import numpy as np
 
 from src.services import FAISSService
@@ -6,8 +8,10 @@ from src.utils import logger
 
 class ProductRanker:
     """
-    Ranks products based on similarity using FAISS.
-    Optimized for efficiency and edge case handling.
+    Ranks products based on vector similarity using FAISS.
+
+    Attributes:
+        faiss_service: FAISS vector search service
     """
 
     def __init__(self):
@@ -16,15 +20,24 @@ class ProductRanker:
         """
         self.faiss_service = FAISSService()  # Uses FAISS_VECTOR_DIMENSION from .env
 
-    def rank_products(self, query_vector: np.ndarray, product_vectors: np.ndarray, product_metadata: list[dict], top_k: int = 5):
+    def rank_products(
+        self, query_vector: np.ndarray, product_vectors: np.ndarray, product_metadata: list[dict], top_k: int = 5
+    ) -> List[Dict[str, Any]]:
         """
-        Ranks products based on similarity using FAISS.
+        Rank products by similarity to query vector.
 
-        :param query_vector: AI-generated query vector (1D NumPy array)
-        :param product_vectors: List of product vectors (2D NumPy array)
-        :param product_metadata: Corresponding metadata for each product
-        :param top_k: Number of top-ranked products to return
-        :return: List of ranked products
+        Args:
+            query_vector: Query embedding vector (1D array)
+            product_vectors: Product embedding vectors (2D array)
+            product_metadata: Product information
+            top_k: Number of results to return
+
+        Returns:
+            List[Dict[str, Any]]: Ranked products with scores
+
+        Raises:
+            ValueError: If input dimensions mismatch
+            FAISSIndexError: If vector search fails
         """
         # 🚀 **Step 1: Validate Inputs**
         if not isinstance(query_vector, np.ndarray) or query_vector.ndim != 1:
@@ -44,7 +57,7 @@ class ProductRanker:
         self.faiss_service.add_vectors(product_vectors)
 
         # 🚀 **Step 3: Search FAISS for Top Matches**
-        similar_indices = self.faiss_service.search_similar_products(query_vector, top_k)
+        similar_indices = self.faiss_service.search_similar(query_vector, top_k)
 
         if not similar_indices:
             logger.warning("⚠️ No similar products found!")

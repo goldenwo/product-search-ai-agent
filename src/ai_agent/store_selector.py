@@ -1,4 +1,4 @@
-"""Store selector service that uses AI to choose the most relevant stores for a product search."""
+"""Store selection service based on product attributes."""
 
 import json
 from typing import Dict, List
@@ -10,8 +10,11 @@ from src.utils.store_config import StoreConfig
 
 class StoreSelector:
     """
-    AI-powered store selector that determines the best online stores
-    based on product attributes.
+    Selects appropriate stores based on product attributes.
+
+    Attributes:
+        store_config: Store configuration service
+        store_specialties: Mapping of stores to their strengths
     """
 
     def __init__(self):
@@ -19,7 +22,22 @@ class StoreSelector:
         self.store_config = StoreConfig()
 
     def select_best_stores(self, attributes: Dict[str, str]) -> List[str]:
-        """Uses AI to determine the best stores for the given product attributes."""
+        """
+        Select best stores for given product attributes.
+
+        Uses store specialties, price ranges, and categories
+        to determine most suitable stores.
+
+        Args:
+            attributes: Product attributes from query parser
+
+        Returns:
+            List[str]: Names of selected stores in priority order
+
+        Example:
+            {"category": "electronics", "price_range": "high"} ->
+            ["bestbuy", "amazon"]
+        """
         available_stores = [config["name"] for config in self.store_config.store_configs.values()]
         if not available_stores:
             return []
