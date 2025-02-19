@@ -1,7 +1,9 @@
+"""Main module for the AI-Powered Product Search API."""
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.api.routes import router
+from src.api import auth, routes
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -19,6 +21,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# Include all API routes
-app.include_router(router)
+# Include routers
+app.include_router(auth.router, prefix="/auth", tags=["auth"])
+app.include_router(routes.router, prefix="/api", tags=["search"])

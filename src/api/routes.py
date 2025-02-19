@@ -1,11 +1,19 @@
-from fastapi import APIRouter
+"""API routes for the product search AI."""
+
+import re
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import HTTPBearer
 
 from src.ai_agent.product_fetcher import ProductFetcher
+from src.services.auth_service import AuthService
 from src.services.redis_service import RedisService
-from src.utils import logger
+from src.utils import FAISSIndexError, OpenAIServiceError, StoreAPIError, logger
 
 router = APIRouter()
-redis_cache = RedisService()  # Initialize Redis
+redis_cache = RedisService()
+auth_service = AuthService()
+security = HTTPBearer()
 
 
 @router.get("/")
@@ -17,36 +25,41 @@ def health_check():
 
 
 @router.get("/search")
-async def search(query: str):
-    """
-    AI-powered product search:
-    1. Extracts product attributes from query (AI).
-    2. Selects the best stores dynamically.
-    3. Uses Redis cache to avoid redundant API calls.
-    4. Fetches and ranks product data using FAISS & AI.
-    """
-    query = query.strip()
+async def search(query: str, auth=Depends(security)):
+    """AI-powered product search with authentication."""
+    # Verify token and get user
+    try:
+        email = auth_service.verify_token(auth.credentials)
+    except HTTPException as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from exc
+
+    # Sanitize input
+    query = re.sub(r"[<>]", "", query.strip())
     if not query:
         return {"error": "Empty search query"}
 
+    if len(query) > 500:
+        return {"error": "Query too long (max 500 characters)"}
+
     try:
-        # Step 1: Check Redis cache
-        cache_key = f"search:{query.lower()}"
-        cached_results = redis_cache.get_cache(cache_key)
+        # Add user-specific cache key
+        cache_key = f"search:{email}:{query.lower()}"
+        cached_results = await redis_cache.get_cache(cache_key)
         if cached_results:
             return {"query": query, "cached": True, "results": cached_results}
 
-        # Step 2: Fetch fresh product data
         fetcher = ProductFetcher()
         search_results = await fetcher.fetch_products(query)
 
         if not search_results:
             return {"query": query, "results": [], "message": "No products found"}
 
-        # Step 3: Cache results
-        redis_cache.set_cache(cache_key, search_results)
-        return {"query": query, "cached": False, "results": search_results}
+        await redis_cache.set_cache(cache_key, search_results)
+        return {"query": query, "cached": False, "results": search_results, "user": email}
 
-    except Exception as e:
+    except (OpenAIServiceError, FAISSIndexError, StoreAPIError) as e:
         logger.error("❌ Search error: %s", str(e))
-        return {"error": "Search failed. Please try again later."}
+        return {"error": "Unable to complete your search at this time."}
+    except ValueError as e:
+        logger.error("❌ Invalid input: %s", str(e))
+        return {"error": "Invalid search parameters"}

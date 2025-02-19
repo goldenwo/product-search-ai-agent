@@ -28,6 +28,8 @@ class QueryParser:
         - Brand specificity (if looking for specific brands)
         - Product type (physical, digital, services)
         """
+        logger.info("🔍 Extracting store selection attributes from: %s", query)
+
         prompt = f"""You are a store selection specialist. Extract only the most relevant attributes for choosing stores:
         Query: "{query}"
 
@@ -50,21 +52,19 @@ class QueryParser:
             "product_type": "physical"
         }}
         """
-        logger.info("🔍 Extracting store selection attributes from: %s", query)
 
         try:
             ai_response = self.openai_service.generate_response(prompt)
             attributes = json.loads(ai_response)
+
             if not isinstance(attributes, dict):
                 logger.error("❌ AI response was not a dictionary: %s", ai_response)
                 return {"error": "Invalid AI response format"}
             return attributes
-        except OpenAIServiceError as e:
-            logger.error("❌ OpenAI service error: %s", e)
-            return {"error": f"AI Service Error: {str(e)}"}
-        except json.JSONDecodeError as e:
-            logger.error("❌ Error decoding JSON response: %s", str(e))
-            return {"error": f"JSON Error: {str(e)}"}
+
+        except (OpenAIServiceError, json.JSONDecodeError) as e:
+            logger.error("❌ Attribute extraction failed: %s", str(e))
+            return {"error": str(e)}
 
     def refine_query_for_store(self, query: str, store: str) -> Dict[str, str]:
         """Refines the search query for a specific store's API format."""

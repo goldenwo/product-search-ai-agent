@@ -37,10 +37,10 @@ class ProductFetcher:
         cache_key = f"store:{store_name}:{hash(frozenset(refined_query.items()))}"
 
         # Check cache first
-        cached_results = self.redis_cache.get_cache(cache_key)
+        cached_results = await self.redis_cache.get_cache(cache_key)
         if cached_results:
             logger.info("📦 Retrieved cached results for %s", store_name)
-            return [Product(**p) for p in cached_results]  # Convert cache to Product objects
+            return [Product(**p) for p in cached_results]
 
         logger.info("📡 Fetching products from %s with query: %s", store_name, refined_query)
 
@@ -90,7 +90,7 @@ class ProductFetcher:
                             continue
 
                     if normalized_products:
-                        self.redis_cache.set_cache(cache_key, [vars(p) for p in normalized_products])
+                        await self.redis_cache.set_cache(cache_key, [vars(p) for p in normalized_products])
                         logger.info("✅ Retrieved %d products from %s", len(normalized_products), store_name)
 
                     return normalized_products
@@ -127,7 +127,7 @@ class ProductFetcher:
 
         # Check final results cache first
         cache_key = f"search_results:{query.lower()}"
-        cached_results = self.redis_cache.get_cache(cache_key)
+        cached_results = await self.redis_cache.get_cache(cache_key)
         if cached_results:
             logger.info("✅ Returning cached search results")
             return cached_results
@@ -173,7 +173,7 @@ class ProductFetcher:
                 ]
 
                 # Cache the final results
-                self.redis_cache.set_cache(cache_key, ranked_products)
+                await self.redis_cache.set_cache(cache_key, ranked_products)
                 logger.info("✅ Returning %d ranked products", len(ranked_products))
                 return ranked_products
 
