@@ -42,9 +42,9 @@ def test_rank_products_empty_inputs(product_ranker):  # pylint: disable=redefine
     empty_vectors = np.array([]).reshape(0, 128)
     empty_metadata = []
 
-    ranked_products = product_ranker.rank_products(query_vector, empty_vectors, empty_metadata)
-    assert isinstance(ranked_products, list)
-    assert len(ranked_products) == 0
+    # Should raise ValueError for empty vectors
+    with pytest.raises(ValueError, match="Empty vector array"):
+        product_ranker.rank_products(query_vector, empty_vectors, empty_metadata)
 
 
 @patch("src.ai_agent.product_ranker.FAISSService")

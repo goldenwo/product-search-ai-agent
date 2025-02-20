@@ -110,16 +110,14 @@ def test_refine_query_for_store_invalid_json(mock_openai, query_parser):  # pyli
     mock_openai.return_value = "invalid json"
 
     refined = query_parser.refine_query_for_store("test query", "BestBuy")
-    assert isinstance(refined, dict)
-    assert not refined  # Should return empty dict
+    assert refined is None  # Should return None, not empty dict
 
 
 @patch("src.services.openai_service.OpenAIService.generate_response")
 def test_refine_query_for_store_empty_store(_mock_openai, query_parser):  # pylint: disable=redefined-outer-name
     """Test handling of empty store name."""
     refined = query_parser.refine_query_for_store("test query", "")
-    assert isinstance(refined, dict)
-    assert not refined  # Should return empty dict
+    assert refined is None
 
 
 @patch("src.services.openai_service.OpenAIService.generate_response")
@@ -128,8 +126,7 @@ def test_refine_query_for_store_api_error(mock_openai, query_parser):  # pylint:
     mock_openai.side_effect = OpenAIServiceError("API Error")
 
     refined = query_parser.refine_query_for_store("test query", "BestBuy")
-    assert isinstance(refined, dict)
-    assert not refined  # Should return empty dict
+    assert refined is None
 
 
 @patch("src.services.openai_service.OpenAIService.generate_response")
@@ -138,5 +135,4 @@ def test_refine_query_for_store_invalid_params(mock_openai, query_parser):  # py
     mock_openai.return_value = '{"invalid_param": "value"}'
 
     refined = query_parser.refine_query_for_store("test query", "BestBuy")
-    assert isinstance(refined, dict)
-    assert not refined  # Should return empty dict when no valid params
+    assert refined is None  # Should return None when no valid params

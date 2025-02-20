@@ -89,7 +89,7 @@ class QueryParser:
             store_name: Target store name
 
         Returns:
-            Optional[Dict[str, str]]: Store-specific query parameters
+            Dict[str, str]: Store-specific query parameters
             None if store is not supported
 
         Example:
