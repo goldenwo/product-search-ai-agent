@@ -53,6 +53,7 @@ redis = {extras = ["hiredis"], version = ">=4.2.0"}
 sqlalchemy = "*"
 email-validator = "*"
 asyncpg = "*"
+sendgrid = "*"
 
 [dev-packages]
 pre-commit = "*"

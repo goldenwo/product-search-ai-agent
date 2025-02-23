@@ -78,3 +78,9 @@ JWT_REFRESH_SECRET_KEY = os.getenv("JWT_REFRESH_SECRET_KEY")
 
 # Database Settings
 DATABASE_URL = os.getenv("DATABASE_URL")
+
+# Email Settings
+SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
+EMAIL_SENDER = os.getenv("EMAIL_SENDER", "noreply@yourdomain.com")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+IS_DEVELOPMENT = os.getenv("ENVIRONMENT", "development") == "development"

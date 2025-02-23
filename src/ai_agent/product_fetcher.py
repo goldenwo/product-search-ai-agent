@@ -94,11 +94,11 @@ class ProductFetcher:
                     for raw_product in products:
                         try:
                             normalized_product = {
-                                "id": str(raw_product[field_mapping.get("id", "id")]),
-                                "title": str(raw_product[field_mapping.get("title", "name")]),
-                                "price": Decimal(str(raw_product[field_mapping.get("price", "price")])),
+                                "id": str(raw_product[field_mapping.get("id", "id")]),  # type: ignore
+                                "title": str(raw_product[field_mapping.get("title", "name")]),  # type: ignore
+                                "price": Decimal(str(raw_product[field_mapping.get("price", "price")])),  # type: ignore
                                 "store": store_name,
-                                "url": str(raw_product[field_mapping.get("url", "productUrl")]),
+                                "url": str(raw_product[field_mapping.get("url", "productUrl")]),  # type: ignore
                                 "description": str(raw_product.get(field_mapping.get("description", "description"), "")),
                                 "category": str(raw_product.get(field_mapping.get("category", "category"), "")),
                                 "brand": str(raw_product.get(field_mapping.get("brand", "brand"), "")),

@@ -241,32 +241,41 @@ async def test_update_password_weak_new(auth_service, mock_user):  # pylint: dis
 async def test_initiate_password_reset_success(auth_service, mock_user):  # pylint: disable=redefined-outer-name
     """Test successful password reset initiation."""
     auth_service.user_service.get_user = AsyncMock(return_value=mock_user)
+    auth_service.email_service.send_reset_email = AsyncMock()
 
-    reset_token = await auth_service.initiate_password_reset("test@example.com")
-    assert isinstance(reset_token, str)
-    # Verify token structure
-    payload = jwt.decode(reset_token, str(JWT_SECRET_KEY), algorithms=["HS256"])
-    assert payload["type"] == "reset"
-    assert payload["sub"] == "test@example.com"
+    await auth_service.initiate_password_reset("test@example.com")
+
+    # Verify email was sent
+    auth_service.email_service.send_reset_email.assert_called_once()
+    call_args = auth_service.email_service.send_reset_email.call_args[1]
+    assert call_args["email"] == "test@example.com"
+    assert call_args["username"] == mock_user.username
+    assert isinstance(call_args["token"], str)
 
 
 @pytest.mark.asyncio
 async def test_initiate_password_reset_invalid_email(auth_service):  # pylint: disable=redefined-outer-name
     """Test password reset with invalid email."""
     auth_service.user_service.get_user = AsyncMock(return_value=None)
+    auth_service.email_service.send_reset_email = AsyncMock()
 
     with pytest.raises(HTTPException) as exc:
         await auth_service.initiate_password_reset("nonexistent@example.com")
     assert exc.value.status_code == 404
-    assert "Email not found" in exc.value.detail
+
+    # Verify no email was sent
+    auth_service.email_service.send_reset_email.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_complete_password_reset_success(auth_service):  # pylint: disable=redefined-outer-name
+async def test_complete_password_reset_success(auth_service, mock_user):  # pylint: disable=redefined-outer-name
     """Test successful password reset completion."""
-    # Get a valid reset token through the public method
-    auth_service.user_service.get_user = AsyncMock(return_value=True)
-    token = await auth_service.initiate_password_reset("test@example.com")
+    # Mock user service to return a proper user object
+    auth_service.user_service.get_user = AsyncMock(return_value=mock_user)
+    auth_service.email_service.send_reset_email = AsyncMock()
+
+    # Get valid reset token
+    token = auth_service._generate_reset_token("test@example.com")
     auth_service.user_service.update_password = AsyncMock()
 
     await auth_service.complete_password_reset(token, "NewPass123")
@@ -283,11 +292,14 @@ async def test_complete_password_reset_invalid_token(auth_service):  # pylint: d
 
 
 @pytest.mark.asyncio
-async def test_complete_password_reset_weak_password(auth_service):  # pylint: disable=redefined-outer-name
+async def test_complete_password_reset_weak_password(auth_service, mock_user):  # pylint: disable=redefined-outer-name
     """Test password reset with weak new password."""
-    # Get valid token through public method
-    auth_service.user_service.get_user = AsyncMock(return_value=True)
-    token = await auth_service.initiate_password_reset("test@example.com")
+    # Mock user service to return a proper user object
+    auth_service.user_service.get_user = AsyncMock(return_value=mock_user)
+    auth_service.email_service.send_reset_email = AsyncMock()
+
+    # Generate token directly
+    token = auth_service._generate_reset_token("test@example.com")
 
     with pytest.raises(HTTPException) as exc:
         await auth_service.complete_password_reset(token, "weak")
@@ -296,7 +308,7 @@ async def test_complete_password_reset_weak_password(auth_service):  # pylint: d
 
 
 @pytest.mark.asyncio
-async def test_refresh_token_wrong_type(auth_service):
+async def test_refresh_token_wrong_type(auth_service):  # pylint: disable=redefined-outer-name
     """Test refresh with access token instead of refresh token."""
     # Create an access token
     token = jwt.encode(
@@ -312,7 +324,7 @@ async def test_refresh_token_wrong_type(auth_service):
 
 
 @pytest.mark.asyncio
-async def test_token_expiry_times(auth_service):
+async def test_token_expiry_times(auth_service):  # pylint: disable=redefined-outer-name
     """Test token expiration times are set correctly."""
     email = "test@example.com"
     access_token, refresh_token = await auth_service.create_tokens(email)

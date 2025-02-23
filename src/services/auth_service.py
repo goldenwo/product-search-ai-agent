@@ -18,6 +18,7 @@ from src.utils.config import (
     JWT_SECRET_KEY,
     REFRESH_TOKEN_EXPIRE_DAYS,
 )
+from src.utils.email_service import EmailService
 
 security = HTTPBearer()
 
@@ -29,11 +30,13 @@ class AuthService:
     Attributes:
         user_service: Service for user database operations
         rate_limit: Service for rate limiting
+        email_service: Service for email operations
     """
 
     def __init__(self):
         self.user_service = UserService()
         self.rate_limit = RateLimitService()
+        self.email_service = EmailService()
         self.password_reset_expiry = 3600  # 1 hour
 
     def verify_password(self, plain_password: str, hashed_password: str) -> bool:
@@ -253,26 +256,14 @@ class AuthService:
         await self.user_service.update_password(email, hashed_password)
         return True
 
-    async def initiate_password_reset(self, email: str) -> str:
-        """
-        Start password reset process.
-
-        Args:
-            email: User's email
-
-        Returns:
-            str: Reset token
-
-        Raises:
-            HTTPException: If email not found
-        """
+    async def initiate_password_reset(self, email: str) -> None:
+        """Start password reset process."""
         user = await self.user_service.get_user(email)
         if not user:
             raise HTTPException(status_code=404, detail="Email not found")
 
         reset_token = self._generate_reset_token(email)
-        # TODO: Send reset email
-        return reset_token
+        await self.email_service.send_reset_email(email=email, token=reset_token, username=user.username)
 
     async def complete_password_reset(self, token: str, new_password: str) -> bool:
         """Complete password reset with token."""
