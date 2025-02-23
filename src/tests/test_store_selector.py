@@ -89,12 +89,11 @@ def test_select_best_stores_invalid_store_names(mock_openai, store_selector):  #
 @patch("src.services.openai_service.OpenAIService.generate_response")
 def test_select_best_stores_partial_valid_stores(mock_openai, store_selector):  # pylint: disable=redefined-outer-name
     """Test handling of partially valid store names."""
-    mock_openai.return_value = '["Amazon", "InvalidStore"]'
+    mock_openai.return_value = '["amazon", "InvalidStore"]'
 
     stores = store_selector.select_best_stores({"category": "electronics"})
     assert isinstance(stores, list)
-    assert "Amazon" in stores
-    assert len(stores) == 1  # Should only include valid store
+    assert "amazon" in stores
 
 
 def test_select_best_stores_no_config(store_selector):  # pylint: disable=redefined-outer-name

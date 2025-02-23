@@ -34,6 +34,7 @@ class AuthService:
     def __init__(self):
         self.user_service = UserService()
         self.rate_limit = RateLimitService()
+        self.password_reset_expiry = 3600  # 1 hour
 
     def verify_password(self, plain_password: str, hashed_password: str) -> bool:
         """
@@ -210,41 +211,83 @@ class AuthService:
         except jwt.InvalidTokenError as exc:
             raise HTTPException(401, "Invalid token") from exc
 
-    async def check_failed_attempts(self, email: str) -> None:
-        """
-        Check if user has exceeded failed login attempts.
-
-        Args:
-            email: User's email address
-
-        Raises:
-            HTTPException: If too many failed attempts (rate limited)
-        """
-        attempts = await self.rate_limit.get_failed_attempts(email)
-        if attempts >= 5:
-            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many failed attempts. Try again later.")
-
     async def login(self, user: UserLogin) -> Token:
-        """
-        Handle complete login flow with rate limiting.
+        """Complete login flow with rate limiting."""
+        # Check rate limiting first
+        await self.rate_limit.check_failed_attempts(user.email)
 
-        Args:
-            user: Login credentials
-
-        Returns:
-            Token: Access and refresh tokens
-
-        Raises:
-            HTTPException: If credentials invalid or rate limited
-        """
-        await self.rate_limit.get_failed_attempts(user.email)
-
+        # Attempt authentication
         user_db = await self.authenticate_user(user.email, user.password)
         if not user_db:
             await self.rate_limit.record_failed_login(user.email)
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password")
 
+        # Success - clear rate limiting
         await self.rate_limit.clear_failed_attempts(user.email)
         access_token, refresh_token = await self.create_tokens(user_db.email)
-
         return Token(access_token=access_token, refresh_token=refresh_token, token_type="bearer")
+
+    async def update_password(self, email: str, old_password: str, new_password: str) -> bool:
+        """
+        Update user's password with validation.
+
+        Args:
+            email: User's email
+            old_password: Current password
+            new_password: New password
+
+        Returns:
+            bool: True if password was updated
+
+        Raises:
+            HTTPException: If old password is incorrect or new password is weak
+        """
+        user = await self.authenticate_user(email, old_password)
+        if not user:
+            raise HTTPException(status_code=401, detail="Current password is incorrect")
+
+        if not self.is_strong_password(new_password):
+            raise HTTPException(status_code=400, detail="New password is too weak")
+
+        hashed_password = self.get_password_hash(new_password)
+        await self.user_service.update_password(email, hashed_password)
+        return True
+
+    async def initiate_password_reset(self, email: str) -> str:
+        """
+        Start password reset process.
+
+        Args:
+            email: User's email
+
+        Returns:
+            str: Reset token
+
+        Raises:
+            HTTPException: If email not found
+        """
+        user = await self.user_service.get_user(email)
+        if not user:
+            raise HTTPException(status_code=404, detail="Email not found")
+
+        reset_token = self._generate_reset_token(email)
+        # TODO: Send reset email
+        return reset_token
+
+    async def complete_password_reset(self, token: str, new_password: str) -> bool:
+        """Complete password reset with token."""
+        try:
+            email = jwt.decode(token, str(JWT_SECRET_KEY), algorithms=["HS256"])["sub"]
+            if not self.is_strong_password(new_password):
+                raise HTTPException(status_code=400, detail="Password too weak")
+
+            hashed_password = self.get_password_hash(new_password)
+            await self.user_service.update_password(email, hashed_password)
+            return True
+        except jwt.InvalidTokenError as exc:
+            raise HTTPException(status_code=400, detail="Invalid or expired reset token") from exc
+
+    def _generate_reset_token(self, email: str) -> str:
+        """Generate password reset token."""
+        expire = datetime.now(timezone.utc) + timedelta(seconds=self.password_reset_expiry)
+        return jwt.encode({"sub": email, "exp": expire, "type": "reset"}, str(JWT_SECRET_KEY), algorithm="HS256")

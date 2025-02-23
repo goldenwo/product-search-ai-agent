@@ -68,3 +68,17 @@ class UserService:
                     await session.rollback()
                     logger.error("❌ Database error: %s", str(e))
                     raise
+
+    async def update_password(self, email: str, hashed_password: str) -> None:
+        """Update user's password in database."""
+        async with self.async_session() as session:
+            async with session.begin():
+                try:
+                    await session.execute(
+                        text("UPDATE users SET hashed_password = :hashed_password WHERE email = :email"),
+                        {"email": email, "hashed_password": hashed_password},
+                    )
+                except SQLAlchemyError as e:
+                    await session.rollback()
+                    logger.error("❌ Database error updating password: %s", str(e))
+                    raise

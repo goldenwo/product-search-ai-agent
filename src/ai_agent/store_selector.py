@@ -12,9 +12,7 @@ class StoreSelector:
     """
     Selects appropriate stores based on product attributes.
 
-    Attributes:
-        store_config: Store configuration service
-        store_specialties: Mapping of stores to their strengths
+    Uses OpenAI to analyze product attributes and select the best stores.
     """
 
     def __init__(self):
@@ -23,22 +21,16 @@ class StoreSelector:
 
     def select_best_stores(self, attributes: Dict[str, str]) -> List[str]:
         """
-        Select best stores for given product attributes.
-
-        Uses store specialties, price ranges, and categories
-        to determine most suitable stores.
+        Select best stores based on product attributes.
 
         Args:
-            attributes: Product attributes from query parser
+            attributes: Product attributes like category, price, etc.
 
         Returns:
-            List[str]: Names of selected stores in priority order
-
-        Example:
-            {"category": "electronics", "price_range": "high"} ->
-            ["bestbuy", "amazon"]
+            List[str]: List of store names, e.g. ["bestbuy", "amazon"]
         """
-        available_stores = [config["name"] for config in self.store_config.store_configs.values()]
+        # Get list of available store names from config
+        available_stores = list(self.store_config.store_configs.keys())
         if not available_stores:
             return []
 
@@ -72,8 +64,8 @@ class StoreSelector:
             ai_response = self.openai_service.generate_response(prompt)
             selected_stores = json.loads(ai_response)
 
-            # Filter to only include valid stores
-            valid_stores = [store for store in selected_stores if store in available_stores]
+            # Filter to only include valid stores (case-insensitive)
+            valid_stores = [store for store in selected_stores if store.lower() in [s.lower() for s in available_stores]]
 
             if valid_stores:
                 logger.info("✅ Selected stores: %s", valid_stores)

@@ -1,6 +1,8 @@
 """Pydantic models for user authentication and data validation."""
 
-from pydantic import BaseModel, EmailStr
+from typing import Annotated
+
+from pydantic import BaseModel, EmailStr, StringConstraints
 from pydantic.config import ConfigDict
 
 
@@ -23,12 +25,12 @@ class UserCreate(BaseModel):
 
     Attributes:
         email: User's email address
-        username: Chosen username
+        username: Chosen username (non-empty string, 1-50 chars)
         password: Plain text password
     """
 
     email: EmailStr
-    username: str
+    username: Annotated[str, StringConstraints(min_length=1, max_length=50, strip_whitespace=True)]
     password: str
 
 
