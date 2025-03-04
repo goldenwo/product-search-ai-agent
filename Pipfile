@@ -54,6 +54,8 @@ sqlalchemy = "*"
 email-validator = "*"
 asyncpg = "*"
 sendgrid = "*"
+extruct = "*"
+w3lib = "*"
 
 [dev-packages]
 pre-commit = "*"

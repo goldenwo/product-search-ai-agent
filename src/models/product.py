@@ -1,7 +1,7 @@
 """Product data models for consistent representation across stores."""
 
 from decimal import Decimal
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
@@ -21,6 +21,12 @@ class Product(BaseModel):
         brand: Optional brand name
         image_url: Optional product image URL
         relevance_score: Optional search relevance score
+        rating: Optional product rating (0-5)
+        review_count: Optional number of reviews
+        shipping: Optional shipping information
+        offers: Optional number of offers/sellers
+        position: Optional position in search results
+        specifications: Optional detailed product specifications
     """
 
     model_config = ConfigDict(
@@ -41,4 +47,22 @@ class Product(BaseModel):
     category: Optional[str] = Field(default=None, description="Product category")
     brand: Optional[str] = Field(default=None, description="Brand name")
     image_url: Optional[HttpUrl] = Field(default=None, description="Product image URL")
+
+    # Search-related attributes
     relevance_score: Optional[float] = Field(default=None, description="Search relevance score")
+    relevance_explanation: Optional[str] = Field(default=None, description="Explanation of relevance score")
+
+    # Rating and reviews
+    rating: Optional[float] = Field(default=None, description="Product rating (0-5)")
+    review_count: Optional[int] = Field(default=None, description="Number of reviews")
+
+    # Shipping and purchase info
+    shipping: Optional[str] = Field(default=None, description="Shipping information")
+    offers: Optional[str] = Field(default=None, description="Number of offers/sellers")
+
+    # Search result metadata
+    position: Optional[int] = Field(default=None, description="Position in search results")
+    source: Optional[str] = Field(default=None, description="Source of product data")
+
+    # Detailed specifications
+    specifications: Optional[dict[str, Any]] = Field(default=None, description="Detailed product specifications")

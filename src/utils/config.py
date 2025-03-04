@@ -1,7 +1,6 @@
 """Configuration management for environment variables and application settings."""
 
 import os
-from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -13,44 +12,8 @@ DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 FAISS_VECTOR_DIMENSION = int(os.getenv("FAISS_VECTOR_DIMENSION", "128"))
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-
-def get_store_api_url(store_name: str, default_url: Optional[str] = None) -> str:
-    """
-    Get store API URL with fallback chain.
-
-    Args:
-        store_name: Name of store to get URL for
-        default_url: Optional fallback URL if env var not set
-
-    Returns:
-        str: API URL in priority order:
-            1. Environment variable (STORE_NAME_API_URL)
-            2. Provided default URL
-            3. Empty string
-
-    Example:
-        get_store_api_url("amazon", "https://api.amazon.com") ->
-        Uses AMAZON_API_URL from env or falls back to provided URL
-    """
-    return os.getenv(f"{store_name.upper()}_API_URL", "") or default_url or ""
-
-
-def get_store_api_key(store_name: str) -> str:
-    """
-    Get store API key from environment.
-
-    Args:
-        store_name: Name of store to get key for
-
-    Returns:
-        str: API key from environment variable (STORE_NAME_API_KEY)
-        Empty string if not set
-
-    Example:
-        get_store_api_key("amazon") -> Uses AMAZON_API_KEY from env
-    """
-    return os.getenv(f"{store_name.upper()}_API_KEY", "")
-
+SERP_API_KEY = os.getenv("SERP_API_KEY")
+SERP_API_URL = os.getenv("SERP_API_URL", "https://google.serper.dev/shopping")
 
 # Redis Configuration
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
