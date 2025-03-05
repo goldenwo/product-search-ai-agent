@@ -72,8 +72,8 @@ async def search(query: str, auth=Depends(security)):
         if cached_results:
             return {"query": query, "cached": True, "results": cached_results}
 
-        # Use SearchAgent instead of ProductFetcher
-        search_agent = SearchAgent()
+        # Pass the existing redis_cache to SearchAgent
+        search_agent = SearchAgent(redis_cache=redis_cache)
         # Get top 10 products by default
         products = await search_agent.search(query, top_n=10)
 
