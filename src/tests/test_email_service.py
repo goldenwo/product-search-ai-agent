@@ -32,7 +32,7 @@ def email_service(mock_mail):
 @pytest.mark.asyncio
 async def test_send_reset_email_production(email_service):
     """Test sending reset email in production mode."""
-    with patch("src.utils.email_service.IS_DEVELOPMENT", False):
+    with patch("src.services.email_service.IS_DEVELOPMENT", False):
         await email_service.send_reset_email(email="test@example.com", token="test-token", username="testuser")
 
         # Verify email was sent
@@ -49,7 +49,7 @@ async def test_send_reset_email_development(email_service, caplog):
     """Test sending reset email in development mode."""
     caplog.set_level("INFO")  # Set log level to capture INFO messages
 
-    with patch("src.utils.email_service.IS_DEVELOPMENT", True):
+    with patch("src.services.email_service.IS_DEVELOPMENT", True):
         await email_service.send_reset_email(email="test@example.com", token="test-token", username="testuser")
 
         # Verify email was logged but not sent
@@ -60,7 +60,7 @@ async def test_send_reset_email_development(email_service, caplog):
 @pytest.mark.asyncio
 async def test_send_reset_email_error(email_service, mock_mail):
     """Test error handling when sending email."""
-    with patch("src.utils.email_service.IS_DEVELOPMENT", False):
+    with patch("src.services.email_service.IS_DEVELOPMENT", False):
         email_service.client.send.side_effect = Exception("SendGrid error")
 
         with pytest.raises(Exception):
