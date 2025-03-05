@@ -7,10 +7,10 @@ import time
 from typing import List, Optional
 
 from src.models.product import Product
+from src.services.factory import SerpProvider, SerpServiceFactory
 from src.services.openai_service import OpenAIService
 from src.services.product_enricher import ProductEnricher
 from src.services.redis_service import RedisService
-from src.services.serp_service import SerpService
 from src.utils import logger
 
 
@@ -31,15 +31,16 @@ class SearchAgent:
         redis_cache: Service for caching results
     """
 
-    def __init__(self, redis_cache: Optional[RedisService] = None):
+    def __init__(self, redis_cache: Optional[RedisService] = None, serp_provider: str = SerpProvider.SERPER):
         """
         Initialize services needed for product search.
 
         Args:
             redis_cache: Optional shared Redis service instance
+            serp_provider: SERP API provider to use
         """
         self.openai_service = OpenAIService()
-        self.serp_service = SerpService()
+        self.serp_service = SerpServiceFactory.create(provider=serp_provider)
         self.product_enricher = ProductEnricher()
         # Use provided Redis service or create a new one if not provided
         self.redis_cache = redis_cache or RedisService()

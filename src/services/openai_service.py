@@ -1,36 +1,56 @@
 """OpenAI service for generating AI responses and embeddings for product search."""
 
-from typing import List, Union
+from typing import List, Optional, Union
 
 import numpy as np
 import openai
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
+from src.services.clients.openai_client import OpenAIClient
 from src.utils import OpenAIServiceError, logger
-from src.utils.config import OPENAI_API_KEY
 
 
 class OpenAIService:
     """
     Handles interactions with OpenAI API for AI-powered query parsing.
+
+    Provides business logic layer on top of OpenAI API interactions,
+    including retries, error handling, and data normalization.
     """
 
-    def __init__(self):
-        self.client = openai.OpenAI(api_key=OPENAI_API_KEY)  # Load API key
+    def __init__(self, api_key: Optional[str] = None):
+        """
+        Initialize OpenAI service with API client.
+
+        Args:
+            api_key: Optional API key override
+        """
+        self.client = OpenAIClient(api_key=api_key)
 
     @retry(
         stop=stop_after_attempt(3),  # Retry 3 times
         wait=wait_fixed(2),  # Wait 2 seconds between retries
         retry=retry_if_exception_type(openai.OpenAIError),  # Retry only OpenAI errors
     )
-    def generate_response(self, prompt: str) -> str:
+    def generate_response(self, prompt: str, model: str = "gpt-4o-mini") -> str:
         """
         Generates a response from OpenAI. Retries on failure.
+
+        Args:
+            prompt: Text prompt to send to the model
+            model: OpenAI model to use
+
+        Returns:
+            str: Generated text response
+
+        Raises:
+            OpenAIServiceError: If the API call fails after retries
         """
         try:
-            response = self.client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "system", "content": prompt}],
+            messages = [self.client.create_message(role="system", content=prompt)]
+            response = self.client.create_chat_completion(
+                messages=messages,
+                model=model,
                 temperature=0.7,
                 max_tokens=100,
             )
@@ -47,21 +67,25 @@ class OpenAIService:
             logger.error("❌ Unexpected OpenAI error: %s", str(e))
             raise OpenAIServiceError("Unexpected OpenAI Failure") from e
 
-    def generate_embedding(self, text: Union[str, List[str]]) -> np.ndarray:
+    def generate_embedding(self, text: Union[str, List[str]], model: str = "text-embedding-3-small") -> np.ndarray:
         """
         Generate embedding vector(s) for text using OpenAI's embedding model.
-        Returns a numpy array of shape (n_texts, embedding_dim).
-        For single texts, returns array of shape (1, embedding_dim).
+
+        Args:
+            text: Single text or list of texts to embed
+            model: OpenAI embedding model to use
+
+        Returns:
+            np.ndarray: Array of shape (n_texts, embedding_dim)
+
+        Raises:
+            OpenAIServiceError: If the API call fails
         """
         try:
-            # Convert single string to list for consistent handling
-            texts = [text] if isinstance(text, str) else text
-            response = self.client.embeddings.create(
-                model="text-embedding-3-small",
-                input=texts,
-            )
+            # Get embeddings from the client
+            embeddings = self.client.create_embeddings(text, model=model)
             # Always return 2D array of shape (n_texts, embedding_dim)
-            return np.array([item.embedding for item in response.data])
+            return np.array([item.embedding for item in embeddings])
 
         except (openai.OpenAIError, ValueError, TypeError) as e:
             logger.error("❌ Error generating embedding: %s", str(e))
