@@ -5,7 +5,7 @@ import re
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPBearer
 
-from src.ai_agent.product_fetcher import ProductFetcher
+from src.ai_agent.search_agent import SearchAgent
 from src.services.auth_service import AuthService
 from src.services.redis_service import RedisService
 from src.utils import FAISSIndexError, OpenAIServiceError, StoreAPIError, logger
@@ -72,8 +72,13 @@ async def search(query: str, auth=Depends(security)):
         if cached_results:
             return {"query": query, "cached": True, "results": cached_results}
 
-        fetcher = ProductFetcher()
-        search_results = await fetcher.fetch_products(query)
+        # Use SearchAgent instead of ProductFetcher
+        search_agent = SearchAgent()
+        # Get top 10 products by default
+        products = await search_agent.search(query, top_n=10)
+
+        # Convert Product objects to dictionaries for JSON serialization
+        search_results = [product.to_json() for product in products]
 
         if not search_results:
             return {"query": query, "results": [], "message": "No products found"}
