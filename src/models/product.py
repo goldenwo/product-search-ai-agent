@@ -14,11 +14,11 @@ class Product(BaseModel):
         id: Unique product identifier
         title: Product name/title
         price: Price in decimal format
-        store: Store name (e.g., "amazon", "bestbuy")
+        store: Store/retailer name (e.g., "amazon", "Walmart", "H&M")
         url: Product page URL
         description: Optional product description
         category: Optional product category
-        brand: Optional brand name
+        brand: Optional brand name (may be empty from API, populated by enricher)
         image_url: Optional product image URL
         relevance_score: Optional search relevance score
         rating: Optional product rating (0-5)
@@ -26,6 +26,7 @@ class Product(BaseModel):
         shipping: Optional shipping information
         offers: Optional number of offers/sellers
         position: Optional position in search results
+        source: Source system that provided the data (e.g., "serp_api", "store_api")
         specifications: Optional detailed product specifications
     """
 
@@ -41,7 +42,7 @@ class Product(BaseModel):
     id: str = Field(..., description="Unique product identifier")
     title: str = Field(..., description="Product name/title")
     price: Decimal = Field(..., description="Price in decimal format", gt=0)
-    store: str = Field(..., description="Store name (e.g., 'amazon', 'bestbuy')")
+    store: str = Field(..., description="Store/retailer name (e.g., 'amazon', 'Walmart', 'H&M')")
     url: HttpUrl = Field(..., description="Product page URL")
 
     description: Optional[str] = Field(default=None, description="Product description")
@@ -63,7 +64,7 @@ class Product(BaseModel):
 
     # Search result metadata
     position: Optional[int] = Field(default=None, description="Position in search results", ge=0)
-    source: Optional[str] = Field(default=None, description="Source of product data")
+    source: Optional[str] = Field(default=None, description="Source system that provided the data")
 
     # Detailed specifications
     specifications: Dict[str, Any] = Field(default_factory=dict, description="Detailed product specifications")

@@ -1,15 +1,16 @@
 """Service for fetching product search results via SERP APIs."""
 
+import re
 from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, List, Optional
-from urllib.parse import urlparse
 
 import aiohttp
 from dotenv import load_dotenv
 
 from src.models.product import Product
-from src.utils import StoreAPIError, logger
+from src.utils import logger
 from src.utils.config import SERP_API_KEY, SERP_API_URL
+from src.utils.exceptions import SerpAPIException
 
 # Load environment variables
 load_dotenv()
@@ -52,12 +53,12 @@ class SerpService:
             List[Product]: List of normalized product objects
 
         Raises:
-            StoreAPIError: If the API call fails
+            SerpAPIException: If the API call fails
         """
         logger.info("🔍 Searching for products with query: %s", query)
 
         if not self.api_key:
-            raise StoreAPIError("Missing SERP API key", "serp", 401)
+            raise SerpAPIException("Missing SERP API key", "serp", 401)
 
         try:
             # Headers for the serper.dev API
@@ -71,7 +72,7 @@ class SerpService:
                     if response.status != 200:
                         error_text = await response.text()
                         logger.error("❌ SERP API error: %s", error_text)
-                        raise StoreAPIError(f"SERP API returned status {response.status}", "serp", response.status)
+                        raise SerpAPIException(f"SERP API returned status {response.status}", "serp", response.status)
 
                     data = await response.json()
 
@@ -97,15 +98,15 @@ class SerpService:
 
         except aiohttp.ClientError as e:
             logger.error("❌ SERP API request failed: %s", str(e))
-            raise StoreAPIError(f"SERP API request failed: {str(e)}", "serp", 500) from e
+            raise SerpAPIException(f"SERP API request failed: {str(e)}", "serp", 500) from e
 
         except (KeyError, ValueError, TypeError) as e:
             logger.error("❌ Error parsing SERP API response: %s", str(e))
-            raise StoreAPIError(f"Error parsing SERP API response: {str(e)}", "serp", 500) from e
+            raise SerpAPIException(f"Error parsing SERP API response: {str(e)}", "serp", 500) from e
 
         except Exception as e:
             logger.error("❌ Unexpected error in SERP API service: %s", str(e))
-            raise StoreAPIError(f"Unexpected error: {str(e)}", "serp", 500) from e
+            raise SerpAPIException(f"Unexpected error: {str(e)}", "serp", 500) from e
 
     def _normalize_results(self, results: List[Dict[str, Any]]) -> List[Product]:
         """
@@ -133,8 +134,16 @@ class SerpService:
                 # Parse price
                 price_str = item.get("price", "0")
                 try:
-                    # Remove currency symbols and commas
-                    price_str = price_str.replace("$", "").replace("€", "").replace("£", "").replace(",", "").strip()
+                    # Extract only numeric characters and decimal points
+                    # First remove currency symbols
+                    price_str = price_str.replace("$", "").replace("€", "").replace("£", "").strip()
+                    # Then extract just the numeric part (first number with decimal if present)
+                    numeric_match = re.search(r"(\d+(?:\.\d+)?)", price_str)
+                    if numeric_match:
+                        price_str = numeric_match.group(1)
+                    else:
+                        price_str = "0.00"
+
                     price = Decimal(price_str)
                 except (InvalidOperation, ValueError, TypeError):
                     price = Decimal("0.00")
@@ -145,17 +154,20 @@ class SerpService:
                     logger.warning("⚠️ Skipping product with no URL")
                     continue
 
+                # Extract store directly from API response's "source" field
+                # This is the retailer name (e.g., "Sam's Club", "Uniqlo", "H&M")
+                store = item.get("source", "").lower()
+
+                # No explicit brand field in the response, so don't try to extract it
+                # The brand might be part of the title, but we won't attempt to parse it here
+
                 # Extract product ID
-                product_id = item.get("serpapi_product_api_id", "") or item.get("product_id", "") or item.get("source", "") + "_" + str(position)
+                product_id = (
+                    item.get("productId", "") or item.get("product_id", "") or item.get("serpapi_product_api_id", "") or f"{store}_{str(position)}"
+                )
 
                 # Extract image URL
                 image_url = item.get("imageUrl", "") or item.get("thumbnail", "")
-
-                # Extract store
-                source = item.get("source", "").lower() or self._extract_store_from_url(url)
-
-                # Extract brand
-                brand = item.get("brand", "") or self._extract_brand(title)
 
                 # Extract shipping info
                 shipping = item.get("delivery", item.get("shipping", ""))
@@ -170,30 +182,50 @@ class SerpService:
 
                 # Extract review count
                 review_count = None
-                if "reviews" in item:
+                if "ratingCount" in item and item["ratingCount"]:
                     try:
-                        review_count = int(item["reviews"].replace(",", "").strip())
-                    except (ValueError, TypeError, AttributeError):
+                        review_count = int(item["ratingCount"])
+                    except (ValueError, TypeError):
                         pass
 
-                # Extract offers
-                offers = item.get("offers", item.get("merchant_count", ""))
+                # Extract offers as raw string, no parsing needed
+                offers_str = item.get("offers", item.get("merchant_count", ""))
 
-                # Create Product object
+                # Extract product condition
+                condition = None
+                if "price" in item:
+                    price_str = item.get("price", "")
+                    if " refurbished" in price_str.lower():
+                        condition = "refurbished"
+                    elif " used" in price_str.lower():
+                        condition = "used"
+                    elif " renewed" in price_str.lower():
+                        condition = "renewed"
+                    elif " new" in price_str.lower():
+                        condition = "new"
+
+                # Add specifications if available
+                specifications = {}
+                if condition:
+                    specifications["condition"] = condition
+
+                # Create Product object with additional fields
                 product = Product(
                     id=str(product_id),
                     title=title,
                     price=price,
-                    store=source,
+                    store=store,  # Set store using the "source" field from API
                     url=url,
                     image_url=image_url if image_url else None,
-                    brand=brand if brand else None,
+                    brand=None,  # No direct brand information from the API
+                    category=None,
                     rating=rating,
                     review_count=review_count,
                     position=position,
                     shipping=shipping if shipping else None,
-                    offers=str(offers) if offers else None,
-                    source="serp_api",
+                    offers=offers_str if offers_str else None,
+                    source="serp_api",  # This indicates where the data came from
+                    specifications=specifications,
                 )
 
                 normalized_products.append(product)
@@ -203,58 +235,3 @@ class SerpService:
                 continue
 
         return normalized_products
-
-    def _extract_brand(self, title: str) -> str:
-        """
-        Extract brand name from product title using heuristics.
-
-        Args:
-            title: Product title
-
-        Returns:
-            str: Extracted brand name or empty string
-        """
-        if not title:
-            return ""
-
-        # Common brand indicators in title
-        brand_indicators = [" by ", " from ", " - "]
-
-        for indicator in brand_indicators:
-            if indicator in title:
-                parts = title.split(indicator, 1)
-                if len(parts) > 1:
-                    # If "by Brand", brand is after the indicator
-                    if indicator == " by " or indicator == " from ":
-                        potential_brand = parts[1].split(" ", 1)[0].strip()
-                        if len(potential_brand) > 1:  # Avoid single letters
-                            return potential_brand
-                    # If "Brand - Product", brand is before the indicator
-                    elif indicator == " - ":
-                        return parts[0].strip()
-
-        # If no indicators found, try to get the first word if it's capitalized
-        first_word = title.split(" ", 1)[0]
-        if first_word.istitle() and len(first_word) > 1:
-            return first_word
-
-        return ""
-
-    def _extract_store_from_url(self, url: str) -> str:
-        """
-        Extract store name from URL.
-
-        Args:
-            url: Product URL
-
-        Returns:
-            str: Store name or "unknown"
-        """
-        try:
-            domain = urlparse(url).netloc
-            parts = domain.split(".")
-            if len(parts) >= 2:
-                return parts[-2].lower()
-        except Exception:
-            pass
-        return "unknown"

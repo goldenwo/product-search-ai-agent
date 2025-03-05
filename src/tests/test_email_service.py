@@ -5,7 +5,7 @@ from unittest.mock import Mock, create_autospec, patch
 import pytest
 from sendgrid.helpers.mail import From, HtmlContent, Mail, Subject, To
 
-from src.utils.email_service import EmailService
+from src.services.email_service import EmailService
 
 
 @pytest.fixture

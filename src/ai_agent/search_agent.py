@@ -253,7 +253,7 @@ class SearchAgent:
         """
         Create a prompt for ranking products that efficiently uses token space.
         This uses a two-step process:
-        1. Identify product-specific evaluation categories
+        1. Identify product-specific evaluation categories based on the product set
         2. Rank products using those categories
 
         Args:
@@ -270,22 +270,24 @@ class SearchAgent:
         prompt = f"""You are a product ranking specialist helping rank {len(products)} products for the search query: "{query}"
 
 YOUR TASK: You will perform a two-step analysis:
-1. FIRST: Identify 4-6 evaluation categories specific to this product type
+1. FIRST: Identify 4-6 evaluation categories specific to this product type and search context
 2. SECOND: Rank each product using these categories
 
 STEP 1 - IDENTIFY RELEVANT EVALUATION CATEGORIES:
-Analyze the product set and identify 4-6 evaluation categories that are:
-- Specific to this product type (e.g., for clothing: fit, material quality, style; for electronics: performance, battery life, build quality)
-- Relevant to the search query: "{query}"
-- Measurable and comparable across products
-- Reflective of what customers value for this product type
+Analyze the product set and dynamically identify 4-6 evaluation categories that are:
+- Specific and appropriate to this exact product type (DO NOT use generic categories)
+- Highly relevant to the search query intent: "{query}"
+- Measurable and comparable across the specific products in this result set
+- Reflective of what customers value when shopping for this specific product type
+- Informed by product specifications, descriptions, and other product details
 
 STEP 2 - RANK PRODUCTS:
 Use these categories to perform a comprehensive evaluation of each product, considering:
-- How well each product performs in each category
-- Overall relevance to the search query
-- Price-value ratio
-- Brand reputation and customer sentiment
+- How well each product performs in each category (score out of 10)
+- Overall relevance to the search query and user intent
+- Price-value ratio considering the product's specifications and features
+- Brand reputation and customer sentiment where available
+- Any unique features or selling points that differentiate products
 
 FORMAT: Provide your analysis as JSON with this structure:
 ```json
@@ -293,7 +295,7 @@ FORMAT: Provide your analysis as JSON with this structure:
   "evaluation_categories": [
     {{
       "name": "Category Name",
-      "description": "Brief description of what this category measures"
+      "description": "Brief description of what this category measures and why it matters for this product type"
     }},
     ...
   ],
@@ -302,10 +304,10 @@ FORMAT: Provide your analysis as JSON with this structure:
       "product": 1,
       "score": 0.95,
       "category_scores": {{
-        "Category Name": 0.9,
+        "Category Name": 9,
         ...
       }},
-      "explanation": "Brief explanation of ranking decision"
+      "explanation": "Detailed explanation of ranking decision that references specific product attributes"
     }},
     ...
   ]
@@ -350,13 +352,14 @@ PRODUCTS:
 
         # Add final instructions for balanced evaluation
         prompt += """
-IMPORTANT:
-- First analyze what categories are most important for this specific product type
-- Create categories that are relevant to how customers would evaluate these products
-- Score products from 0.0 to 1.0 in each category (1.0 is perfect)
-- Calculate an overall score for each product based on category scores
-- Provide brief explanations that reference the category scores
-- Consider the search query intent as the primary ranking factor
+IMPORTANT GUIDELINES:
+- First analyze what categories are most appropriate for THIS SPECIFIC product type - don't use generic categories
+- Create categories that reflect how customers would evaluate these exact products in the real world
+- DO NOT use predefined categories - generate them based on the specific product set and search context
+- Score products from 0-10 in each category (10 is perfect)
+- Calculate an overall score for each product from 0.0-1.0 based on category scores
+- Provide detailed explanations that reference specific product attributes and features
+- The search query intent should be the primary consideration for relevance scoring
 - Return ONLY valid JSON following the exact format specified
 """
         return prompt
@@ -419,7 +422,10 @@ IMPORTANT:
         # Extract evaluation categories (new feature)
         categories = data.get("evaluation_categories", [])
         category_names = [cat.get("name") for cat in categories]
-        logger.info("🔍 Using evaluation categories: %s", ", ".join(category_names))
+        logger.info("🔍 Using AI-generated evaluation categories: %s", ", ".join(category_names))
+
+        # Store the category definitions for potential display in UI
+        category_definitions = {cat.get("name"): cat.get("description") for cat in categories}
 
         # Extract rankings
         rankings = data.get("rankings", [])
@@ -442,9 +448,16 @@ IMPORTANT:
                 explanation = rank_data.get("explanation", "")
 
                 if category_scores:
-                    # Store category scores in specifications
+                    # Store category scores in specifications - note that these are now 0-10 scale
                     for category, score in category_scores.items():
-                        product.specifications[f"Score: {category}"] = score
+                        # Store the score and convert to a normalized value
+                        normalized_score = float(score) / 10.0  # Convert 0-10 to 0.0-1.0
+                        product.specifications[f"Score: {category}"] = f"{score}/10"
+                        product.specifications[f"NormalizedScore: {category}"] = f"{normalized_score:.2f}"
+
+                    # Also store category definitions for reference
+                    if category_definitions:
+                        product.specifications["CategoryDefinitions"] = category_definitions
 
                 product.relevance_explanation = explanation
 

@@ -10,6 +10,7 @@ from fastapi.security import HTTPBearer
 from passlib.hash import bcrypt
 
 from src.models.user import Token, UserCreate, UserInDB, UserLogin
+from src.services.email_service import EmailService
 from src.services.rate_limit_service import RateLimitService
 from src.services.user_service import UserService
 from src.utils.config import (
@@ -18,7 +19,6 @@ from src.utils.config import (
     JWT_SECRET_KEY,
     REFRESH_TOKEN_EXPIRE_DAYS,
 )
-from src.utils.email_service import EmailService
 
 security = HTTPBearer()
 

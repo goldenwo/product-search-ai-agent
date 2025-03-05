@@ -9,7 +9,6 @@ load_dotenv()
 
 # Core configurations
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"
-FAISS_VECTOR_DIMENSION = int(os.getenv("FAISS_VECTOR_DIMENSION", "128"))
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 SERP_API_KEY = os.getenv("SERP_API_KEY")
@@ -24,7 +23,6 @@ REDIS_TTL = int(os.getenv("REDIS_TTL", "300"))  # 5 minutes rate limiting
 
 # Print config (Debug Mode Only)
 if DEBUG:
-    print(f"✅ Loaded Config: FAISS_VECTOR_DIMENSION={FAISS_VECTOR_DIMENSION}, DEBUG={DEBUG}")
     print(f"✅ Redis Config: {REDIS_HOST}:{REDIS_PORT}, DB={REDIS_DB}, TTL={REDIS_TTL}")
 
 # Security Settings

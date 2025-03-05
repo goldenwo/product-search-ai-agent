@@ -8,7 +8,7 @@ from fastapi.security import HTTPBearer
 from src.ai_agent.search_agent import SearchAgent
 from src.services.auth_service import AuthService
 from src.services.redis_service import RedisService
-from src.utils import FAISSIndexError, OpenAIServiceError, StoreAPIError, logger
+from src.utils import OpenAIServiceError, SerpAPIException, logger
 
 router = APIRouter()
 redis_cache = RedisService()
@@ -49,7 +49,7 @@ async def search(query: str, auth=Depends(security)):
             - 400: Invalid search query
         OpenAIServiceError: If AI service fails
         FAISSIndexError: If vector search fails
-        StoreAPIError: If store API calls fail
+        SerpAPIException: If SERP API calls fail
     """
     # Verify token and get user
     try:
@@ -86,7 +86,7 @@ async def search(query: str, auth=Depends(security)):
         await redis_cache.set_cache(cache_key, search_results)
         return {"query": query, "cached": False, "results": search_results, "user": email}
 
-    except (OpenAIServiceError, FAISSIndexError, StoreAPIError) as e:
+    except (OpenAIServiceError, SerpAPIException) as e:
         logger.error("❌ Search error: %s", str(e))
         return {"error": "Unable to complete your search at this time."}
     except ValueError as e:
