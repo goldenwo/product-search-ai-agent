@@ -4,6 +4,7 @@ from typing import List, Optional, Union
 
 import numpy as np
 import openai
+from openai.types.chat import ChatCompletion
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 from src.services.clients.openai_client import OpenAIClient
@@ -33,7 +34,7 @@ class OpenAIService:
         wait=wait_fixed(2),  # Wait 2 seconds between retries
         retry=retry_if_exception_type(openai.OpenAIError),  # Retry only OpenAI API errors
     )
-    def generate_response(self, prompt: str, model: str = OPENAI_CHAT_MODEL, max_tokens: int = 1500, use_json_mode: bool = False) -> str:
+    def generate_response(self, prompt: str, model: str = OPENAI_CHAT_MODEL, max_tokens: int = 1500, use_json_mode: bool = False) -> ChatCompletion:
         """
         Generates a response from OpenAI's chat completion API. Retries on failure.
 
@@ -44,7 +45,7 @@ class OpenAIService:
             use_json_mode: If True, request JSON output from the model.
 
         Returns:
-            Generated text response (potentially a JSON string if use_json_mode=True).
+            openai.ChatCompletion: The full response object from the API, including usage data.
 
         Raises:
             OpenAIServiceError: If the API call fails after retries
@@ -60,10 +61,9 @@ class OpenAIService:
             response = self.client.create_chat_completion(
                 messages=messages, model=model, temperature=0.2, max_tokens=max_tokens, response_format=response_format_arg
             )
-            content = response.choices[0].message.content
-            if not content:
-                raise OpenAIServiceError("Empty response from OpenAI")
-            return content
+            if not response.choices or not response.choices[0].message.content:
+                raise OpenAIServiceError("Empty response content from OpenAI")
+            return response
 
         except openai.OpenAIError as e:
             logger.error("❌ OpenAI API returned an error: %s", e)

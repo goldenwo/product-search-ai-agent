@@ -23,6 +23,7 @@ REDIS_TTL = int(os.getenv("REDIS_TTL", "300"))  # Rate limiting TTL
 # Specific Cache TTLs
 CACHE_ENRICHED_PRODUCT_TTL = int(os.getenv("CACHE_ENRICHED_PRODUCT_TTL", "86400"))  # 24 hours for enriched products
 CACHE_RANKING_TTL = int(os.getenv("CACHE_RANKING_TTL", "10800"))  # 3 hours for rankings
+CACHE_SEARCH_RESULTS_TTL = int(os.getenv("CACHE_SEARCH_RESULTS_TTL", "3600"))  # 1 hour for final search results (used in routes)
 
 # Optional: Print config only in debug mode for verification
 if DEBUG:

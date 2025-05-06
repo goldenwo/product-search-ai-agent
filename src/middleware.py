@@ -63,6 +63,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
         token = auth_header.split("Bearer ")[1]
 
         # 3. Verify Token & Populate State
+        # Note: This middleware performs essential JWT decoding and validation (signature, expiry, type).
+        # It may not include *all* checks present in AuthService.verify_token (e.g., DB lookups, blacklisting).
+        # Ensure core validation logic (secret, algorithm) remains consistent.
         try:
             if not JWT_SECRET_KEY:
                 logger.error("JWT_SECRET_KEY is not configured on the server.")

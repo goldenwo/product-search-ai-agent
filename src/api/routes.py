@@ -11,7 +11,7 @@ from src.dependencies import get_auth_service, get_redis_service, get_search_age
 from src.services.auth_service import AuthService
 from src.services.redis_service import RedisService
 from src.utils import OpenAIServiceError, SerpAPIException, logger
-from src.utils.config import API_RATE_LIMIT_USER
+from src.utils.config import API_RATE_LIMIT_USER, CACHE_SEARCH_RESULTS_TTL
 
 router = APIRouter()
 security = HTTPBearer()
@@ -101,8 +101,9 @@ async def search(
 
         # Cache the results
         try:
-            await redis_cache.set_cache(cache_key, search_results)  # Uses default TTL from config
-            logger.info("Cached search results for key: '%s'. User: %s", cache_key, email)
+            # Use the specific TTL defined in config
+            await redis_cache.set_cache(cache_key, search_results, ttl=CACHE_SEARCH_RESULTS_TTL)
+            logger.info("Cached search results for key: '%s' (TTL: %ds). User: %s", cache_key, CACHE_SEARCH_RESULTS_TTL, email)
         except Exception as redis_err:
             # Log Redis error but return results anyway
             logger.error("⚠️ Redis cache SET error for key '%s' (User: %s): %s. Results returned but not cached.", cache_key, email, redis_err)

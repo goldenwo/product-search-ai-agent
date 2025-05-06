@@ -16,6 +16,68 @@ from src.services.openai_service import OpenAIService
 from src.utils import logger
 from src.utils.config import ENRICHMENT_USE_HEADLESS_FALLBACK, HEADLESS_BROWSER_ENDPOINT, OPENAI_EXTRACTION_MODEL
 
+# --- Constants for Scraping/Parsing ---
+
+# Selectors for common non-content elements to remove before AI processing
+_NON_CONTENT_SELECTORS = [
+    "script",
+    "style",
+    "nav",
+    "footer",
+    "header",
+    "aside",
+    ".sidebar",
+    ".related-products",
+    ".upsell",
+    "form",
+    "button",
+    "input",
+    "select",
+    ".breadcrumb",
+    ".pagination",
+    "iframe",
+    "noscript",
+    "link",
+    "meta",
+]
+
+# Selectors for likely content sections on product pages
+_CONTENT_SELECTORS = {
+    "description": ["#productDescription", ".product-description", "#description", ".description", ".product-long-description"],
+    "specifications": [
+        "#productDetails_detailBullets_sections1",
+        ".specification-table",
+        ".product-specs",
+        ".specifications",
+        "#technicalSpecifications_feature_div",
+        ".prodDetTable",
+    ],
+    "features": [".feature-bullets", ".product-features", ".key-features", "#feature-bullets"],
+    "main_content": ["main", "#main", "#content", ".content", "#product-details", ".product-info", "article"],  # Fallback selectors
+}
+
+# Keys often found in structured data (JSON-LD/Microdata) that are NOT detailed specs
+_EXCLUDED_STRUCTURED_DATA_KEYS = {
+    "name",
+    "brand",
+    "description",
+    "category",
+    "price",
+    "url",
+    "image",
+    "@type",
+    "@context",
+    "offers",
+    "availability",
+    "condition",
+    "currency",
+    "sku",
+    "mpn",
+    "gtin",
+}
+
+# --- End Constants ---
+
 
 class ProductEnricher:
     """
@@ -345,30 +407,8 @@ class ProductEnricher:
         Criteria: Has a reasonable description and at least 3 other specific specification keys.
         """
         has_desc = bool(specs.get("description") and len(str(specs["description"])) > 50)
-        # Count relevant spec keys (excluding common top-level ones like name, price, etc.)
-        spec_keys = [
-            k
-            for k in specs.keys()
-            if k
-            not in [
-                "name",
-                "brand",
-                "description",
-                "category",
-                "price",
-                "url",
-                "image",
-                "@type",
-                "@context",
-                "offers",
-                "availability",
-                "condition",
-                "currency",
-                "sku",
-                "mpn",
-                "gtin",
-            ]
-        ]
+        # Count relevant spec keys using the defined exclusion list
+        spec_keys = [k for k in specs.keys() if k not in _EXCLUDED_STRUCTURED_DATA_KEYS]
         has_enough_specs = len(spec_keys) >= 3
         return has_desc and has_enough_specs
 
@@ -530,28 +570,8 @@ class ProductEnricher:
             # Parse HTML with BeautifulSoup
             soup = BeautifulSoup(html_content, "html.parser")
 
-            # Remove common non-content elements aggressively to clean input for AI
-            for selector in [
-                "script",
-                "style",
-                "nav",
-                "footer",
-                "header",
-                "aside",
-                ".sidebar",
-                ".related-products",
-                ".upsell",
-                "form",
-                "button",
-                "input",
-                "select",
-                ".breadcrumb",
-                ".pagination",
-                "iframe",
-                "noscript",
-                "link",
-                "meta",
-            ]:
+            # Remove common non-content elements aggressively using the defined selectors
+            for selector in _NON_CONTENT_SELECTORS:
                 for element in soup.select(selector):
                     if isinstance(element, Tag):
                         element.extract()
@@ -560,20 +580,8 @@ class ProductEnricher:
             # Try to extract text from likely sections before falling back to broader content
             extracted_texts = []
 
-            # Selectors for common product page sections
-            content_selectors = {
-                "description": ["#productDescription", ".product-description", "#description", ".description", ".product-long-description"],
-                "specifications": [
-                    "#productDetails_detailBullets_sections1",
-                    ".specification-table",
-                    ".product-specs",
-                    ".specifications",
-                    "#technicalSpecifications_feature_div",
-                    ".prodDetTable",
-                ],
-                "features": [".feature-bullets", ".product-features", ".key-features", "#feature-bullets"],
-                "main_content": ["main", "#main", "#content", ".content", "#product-details", ".product-info", "article"],  # Fallback selectors
-            }
+            # Selectors for common product page sections (using constant)
+            content_selectors = _CONTENT_SELECTORS
 
             processed_elements = set()  # Keep track of elements already processed
 
@@ -667,9 +675,15 @@ Your task is to extract key product information accurately.
 
             # Parse JSON response (should be more reliable with JSON mode)
             try:
-                specs = json.loads(response)
+                # Extract content from the response object
+                content = response.choices[0].message.content if response.choices and response.choices[0].message.content else None
+                if not content:
+                    logger.error("❌ AI JSON mode response content is empty for %s.", product_name or "product")
+                    return {}
+
+                specs = json.loads(content)
                 if not isinstance(specs, dict):
-                    logger.error("❌ AI JSON mode response was not a dict for %s. Response: %s", product_name or "product", response[:500])
+                    logger.error("❌ AI JSON mode response was not a dict for %s. Response: %s", product_name or "product", content[:500])
                     return {}
 
                 # Basic validation of expected keys (optional but recommended)
@@ -683,7 +697,8 @@ Your task is to extract key product information accurately.
 
             except json.JSONDecodeError as e:
                 # This should be rare with JSON mode, but handle defensively
-                logger.error("❌ Failed to parse AI JSON mode response for %s: %s\nResponse: %s", product_name or "product", e, response[:500])
+                content = response.choices[0].message.content if response.choices and response.choices[0].message.content else "[Content Error]"
+                logger.error("❌ Failed to parse AI JSON mode response for %s: %s\nResponse: %s", product_name or "product", e, content[:500])
                 return {}
 
         except Exception as e:

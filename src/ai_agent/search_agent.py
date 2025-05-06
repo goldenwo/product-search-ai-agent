@@ -355,14 +355,29 @@ class SearchAgent:
             # Get ranking from LLM
             logger.info("⏳ Requesting ranking from AI model: %s", OPENAI_CHAT_MODEL)
             start_rank_time = time.time()
-            # TODO: Add logic to get token usage from response if client/service supports it
-            response = self.openai_service.generate_response(prompt, model=OPENAI_CHAT_MODEL, max_tokens=3000)
+
+            # Get the full response object from the service
+            response_obj = self.openai_service.generate_response(prompt, model=OPENAI_CHAT_MODEL, max_tokens=3000)
             rank_duration = time.time() - start_rank_time
-            # TODO: Log token usage here
+
+            # Extract content and log usage
+            response_content = response_obj.choices[0].message.content if response_obj.choices and response_obj.choices[0].message.content else None
+            if response_obj.usage:
+                logger.info(
+                    "📊 OpenAI Ranking Usage - Prompt: %d, Completion: %d, Total: %d tokens",
+                    response_obj.usage.prompt_tokens,
+                    response_obj.usage.completion_tokens,
+                    response_obj.usage.total_tokens,
+                )
+
+            if not response_content:
+                logger.error("❌ AI ranking response content is empty.")
+                return self._create_emergency_fallback(products, "Ranking system error: Empty response")
+
             logger.info("⏱️ AI ranking completed in %.2f seconds", rank_duration)
 
-            # Parse the response
-            ranked_products = self._parse_ranking_response(response, products)
+            # Parse the response content (string)
+            ranked_products = self._parse_ranking_response(response_content, products)
 
             # Cache the ranking results
             # Store results mapped by stable product key for reliable retrieval
@@ -537,7 +552,7 @@ PRODUCTS:
             message: Explanation message to add to products
 
         Returns:
-            List[Product]: Products with default scores sorted alphabetically
+            List[Product]: Products with default scores sorted by position
         """
         logger.warning("⚠️ Using emergency alphabetical ordering fallback")
         fallback_products = products.copy()
@@ -546,16 +561,17 @@ PRODUCTS:
             product.relevance_score = 0.5  # Neutral score
             product.relevance_explanation = message
 
-        # Sort alphabetically as a deterministic fallback
-        fallback_products.sort(key=lambda p: p.title)
+        # Sort by original position (lower is better), putting None positions last
+        # Use a large number for None positions to ensure they are sorted to the end.
+        fallback_products.sort(key=lambda p: p.position if p.position is not None else float("inf"))
         return fallback_products
 
-    def _parse_ranking_response(self, response: str, products: List[Product]) -> List[Product]:
+    def _parse_ranking_response(self, response_content: str, products: List[Product]) -> List[Product]:
         """
-        Parse LLM ranking response and update product scores.
+        Parse LLM ranking response string and update product scores.
 
         Args:
-            response: LLM response with rankings
+            response_content: LLM response content string (JSON expected)
             products: Original product list
 
         Returns:
@@ -567,20 +583,20 @@ PRODUCTS:
         """
         ranked_products = products.copy()  # Work on a copy
 
-        # Extract JSON from response more robustly
+        # Extract JSON from response string more robustly
         try:
-            json_match = re.search(r"```json\s*(.*?)\s*```", response, re.DOTALL)
+            json_match = re.search(r"```json\s*(.*?)\s*```", response_content, re.DOTALL)
             if json_match:
                 json_str = json_match.group(1)
             else:
                 # Fallback: Try finding the first '{' and last '}'
-                start = response.find("{")
-                end = response.rfind("}")
+                start = response_content.find("{")
+                end = response_content.rfind("}")
                 if start != -1 and end != -1:
-                    json_str = response[start : end + 1]
+                    json_str = response_content[start : end + 1]
                 else:
                     logger.error("❌ Could not extract JSON block from ranking response.")
-                    raise json.JSONDecodeError("No JSON object found", response, 0)
+                    raise json.JSONDecodeError("No JSON object found", response_content, 0)
 
             data = json.loads(json_str)
             if not isinstance(data, dict):
@@ -588,7 +604,7 @@ PRODUCTS:
                 raise ValueError("Parsed JSON is not a dictionary")
 
         except json.JSONDecodeError as e:
-            logger.error("❌ Failed to decode JSON from ranking response: %s\nResponse: %s", e, response[:500])
+            logger.error("❌ Failed to decode JSON from ranking response: %s\nResponse: %s", e, response_content[:500])
             raise  # Re-raise to be caught by caller, triggering fallback
 
         # Extract evaluation categories and definitions

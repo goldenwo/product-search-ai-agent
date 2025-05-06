@@ -82,7 +82,7 @@ class OpenAIClient:
             **kwargs: Additional parameters to pass to the API
 
         Returns:
-            ChatCompletion: Raw API response
+            ChatCompletion: The full API response object, including usage data.
 
         Raises:
             openai.OpenAIError: If the API call fails
@@ -99,6 +99,7 @@ class OpenAIClient:
             if response_format:
                 api_args["response_format"] = response_format
 
+            # Return the full response object
             response = self.client.chat.completions.create(**api_args)
             return response
         except openai.OpenAIError as e:
