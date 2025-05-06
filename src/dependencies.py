@@ -2,7 +2,7 @@
 
 # Caching and Rate Limiting
 # ADDED: Import Depends
-from fastapi import Depends
+from fastapi import Depends, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -14,6 +14,9 @@ from src.services.openai_service import OpenAIService
 from src.services.product_enricher import ProductEnricher
 from src.services.redis_service import RedisService
 from src.services.serp_service import SerpService
+
+# ADDED: Import logger for key_func warning
+from src.utils import logger
 from src.utils.config import OPENAI_API_KEY, REDIS_DB, REDIS_HOST, REDIS_PORT  # Added OpenAI Key
 
 # --- Cached Singleton Instances ---
@@ -87,9 +90,39 @@ def get_auth_service() -> AuthService:
     return _cache["auth"]
 
 
+# --- Rate Limiter Key Function ---
+def key_func_user_or_ip(request: Request) -> str:
+    """
+    Generates a rate limit key based on authenticated user email if available,
+    otherwise falls back to the client's IP address.
+    Requires an upstream authentication middleware to set request.state.user_email.
+    """
+    # Attempt to get user identifier set by authentication middleware
+    # Adjust "user_email" if your middleware uses a different state attribute name
+    user_identifier = getattr(request.state, "user_email", None)
+
+    if user_identifier:
+        # Use a user-specific key format
+        key = f"user:{user_identifier}"
+        # logger.debug(f"Rate limiting key (User): {key}") # Optional: debug logging
+        return key
+    else:
+        # Fallback to IP address if no user identifier is found in state
+        ip = get_remote_address(request)
+        key = f"ip:{ip}"
+        # Log this fallback case, as it might indicate an issue or an intended public endpoint
+        # Check if request.url exists and has path before logging
+        path_info = request.url.path if hasattr(request, "url") and hasattr(request.url, "path") else "unknown path"
+        logger.warning(f"Rate limiting key (Fallback to IP): {key} for path {path_info}")
+        return key
+
+
 # --- Rate Limiter Instance --- (Keep as is)
 limiter = Limiter(
-    key_func=get_remote_address, storage_uri=f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}", strategy="fixed-window", default_limits=["1000/minute"]
+    key_func=get_remote_address,  # NOTE: Default key_func, route overrides where needed
+    storage_uri=f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}",
+    strategy="fixed-window",
+    default_limits=["1000/minute"],
 )
 
 # You can add other shared dependencies here later, e.g.:

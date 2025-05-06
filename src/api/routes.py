@@ -5,10 +5,9 @@ import re
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 
 from src.ai_agent.search_agent import SearchAgent
-from src.dependencies import get_auth_service, get_redis_service, get_search_agent, limiter
+from src.dependencies import get_auth_service, get_redis_service, get_search_agent, key_func_user_or_ip, limiter
 from src.services.auth_service import AuthService
 from src.services.redis_service import RedisService
 from src.utils import OpenAIServiceError, SerpAPIException, logger
@@ -16,16 +15,6 @@ from src.utils.config import API_RATE_LIMIT_USER
 
 router = APIRouter()
 security = HTTPBearer()
-
-
-# Simplified key function for demonstration - relies on IP.
-# Per-user limiting requires passing auth_service or user identifier to key_func.
-# slowapi doesn't easily support async key_funcs or Depends within key_funcs.
-# Consider alternative rate-limiting libraries or strategies for per-user limits.
-# Key Function (Using IP for now)
-def key_func_ip_only(request: Request) -> str:
-    logger.warning("Using IP-based rate limiting for /search route.")  # Log the limitation
-    return get_remote_address(request)
 
 
 @router.get("/")
@@ -41,7 +30,7 @@ async def health_check(request: Request):
 
 
 @router.get("/search")
-@limiter.limit(API_RATE_LIMIT_USER, key_func=key_func_ip_only)
+@limiter.limit(API_RATE_LIMIT_USER, key_func=key_func_user_or_ip)
 async def search(
     request: Request,
     query: str,

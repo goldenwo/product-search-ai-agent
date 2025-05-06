@@ -7,6 +7,7 @@ from slowapi.errors import RateLimitExceeded
 
 from src.api import auth, routes
 from src.dependencies import limiter
+from src.middleware import AuthMiddleware
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -29,6 +30,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add the custom authentication middleware
+# This should generally run before other app-specific logic but after CORS
+app.add_middleware(AuthMiddleware)
 
 # Include routers
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
