@@ -16,10 +16,12 @@ from src.utils.config import OPENAI_API_KEY
 
 class OpenAIClient:
     """
-    Client for making requests to OpenAI APIs.
+    Low-level client for making requests to OpenAI APIs.
 
     Handles raw API interactions including request formatting,
-    authentication, and parsing of responses.
+    authentication, and basic error handling. Should be used
+    by a higher-level service (e.g., OpenAIService) which adds
+    business logic like retries, response parsing, etc.
     """
 
     def __init__(self, api_key: Optional[str] = None):
@@ -38,10 +40,10 @@ class OpenAIClient:
     @staticmethod
     def create_message(role: Literal["system", "user", "assistant"], content: str) -> ChatCompletionMessageParam:
         """
-        Create a properly typed message for the OpenAI API.
+        Create a properly typed message object for the OpenAI Chat Completion API.
 
         Args:
-            role: Message role (system, user, or assistant)
+            role: Message role ('system', 'user', or 'assistant')
             content: Message content
 
         Returns:
@@ -54,7 +56,9 @@ class OpenAIClient:
         elif role == "assistant":
             return ChatCompletionAssistantMessageParam(role=role, content=content)
         else:
-            # This shouldn't happen due to the Literal type constraint
+            # This shouldn't happen due to the Literal type constraint,
+            # but provides a fallback just in case.
+            logger.warning("Invalid role '%s' provided to create_message, defaulting to 'user'.", role)
             return ChatCompletionUserMessageParam(role="user", content=content)
 
     def create_chat_completion(
@@ -98,7 +102,7 @@ class OpenAIClient:
             response = self.client.chat.completions.create(**api_args)
             return response
         except openai.OpenAIError as e:
-            logger.error("❌ OpenAI chat completion API error: %s", str(e))
+            logger.error("❌ OpenAI chat completion API error: %s", e)
             raise
 
     def create_embeddings(self, texts: Union[str, List[str]], model: str = "text-embedding-3-small") -> List[Embedding]:
@@ -125,5 +129,5 @@ class OpenAIClient:
             )
             return response.data
         except openai.OpenAIError as e:
-            logger.error("❌ OpenAI embeddings API error: %s", str(e))
+            logger.error("❌ OpenAI embeddings API error: %s", e)
             raise

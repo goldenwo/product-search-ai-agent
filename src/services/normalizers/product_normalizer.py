@@ -44,16 +44,14 @@ class ProductNormalizer:
                 logger.warning("⚠️ Skipping product with no URL")
                 return None
 
-            # Extract store directly from API response's "source" field
-            # This is the retailer name (e.g., "Sam's Club", "Uniqlo", "H&M")
+            # Extract store directly from API response's "source" field (retailer name)
             store = item.get("source", "").lower()
 
             # Extract potential stable product identifiers from SERP item
-            # Use a consistent key naming convention (e.g., lowercase)
             stable_ids = {
                 "productId": item.get("productId") or item.get("product_id"),
-                "serpId": item.get("serpapi_product_api_id"),  # Example if using SerpApi
-                "itemId": item.get("item_id"),  # Another common key
+                "serpId": item.get("serpapi_product_api_id"),  # Example from SerpApi
+                "itemId": item.get("item_id"),  # Common key
                 "sku": item.get("sku"),
                 "mpn": item.get("mpn"),
                 "gtin": item.get("gtin"),
@@ -61,8 +59,8 @@ class ProductNormalizer:
             # Filter out None/empty values
             initial_specs_from_serp = {k: v for k, v in stable_ids.items() if v}
 
-            # Generate the primary product ID (used internally if no better ID found)
-            # Use the first available stable ID if possible, otherwise fallback
+            # Generate the primary product ID (internal identifier)
+            # Prioritize known stable IDs, fallback to store + position
             primary_id_source = next(
                 (initial_specs_from_serp[k] for k in ["productId", "serpId", "itemId", "sku", "mpn", "gtin"] if k in initial_specs_from_serp), None
             )
@@ -78,16 +76,16 @@ class ProductNormalizer:
             rating = ProductNormalizer._parse_rating(item)
             review_count = ProductNormalizer._parse_review_count(item)
 
-            # Extract offers as raw string, no parsing needed
+            # Extract offers as raw string (e.g., "3 new from $19.99")
             offers_str = item.get("offers", item.get("merchant_count", ""))
 
-            # Extract product condition
+            # Extract product condition if mentioned in price string
             condition = ProductNormalizer._detect_condition(item.get("price", ""))
 
-            # Initialize specifications with stable IDs from SERP and condition
+            # Initialize specifications dict with stable IDs and condition
             specifications = initial_specs_from_serp
             if condition:
-                specifications["condition"] = condition  # Add condition if detected
+                specifications["condition"] = condition
 
             # Create Product object with additional fields
             product = Product(
@@ -97,21 +95,21 @@ class ProductNormalizer:
                 store=store,  # Set store using the "source" field from API
                 url=url,
                 image_url=image_url if image_url else None,
-                brand=None,  # No direct brand information from the API
-                category=None,
+                brand=None,  # Brand often missing from SERP, populated by enricher
+                category=None,  # Category often missing from SERP, populated by enricher
                 rating=rating,
                 review_count=review_count,
                 position=position,
                 shipping=shipping if shipping else None,
                 offers=offers_str if offers_str else None,
-                source="serp_api",  # This indicates where the data came from
+                source="serp_api",  # Indicate data origin
                 specifications=specifications,
             )
 
             return product
 
         except Exception as e:
-            logger.error("❌ Error normalizing product: %s", str(e))
+            logger.error("❌ Error normalizing product: %s", e)
             return None
 
     @staticmethod
@@ -169,17 +167,22 @@ class ProductNormalizer:
         Returns:
             int: Review count or None if not available
         """
-        if "ratingCount" in item and item["ratingCount"]:
+        # Check both ratingCount and reviews keys, prefer ratingCount if available
+        review_key = "ratingCount" if "ratingCount" in item else "reviews"
+        if review_key in item and item[review_key]:
             try:
-                return int(item["ratingCount"])
+                # Handle potential string formatting like '1,234 reviews'
+                count_str = str(item[review_key]).split()[0]
+                count_str = re.sub(r"[^\d]", "", count_str)  # Remove non-digits
+                return int(count_str)
             except (ValueError, TypeError):
-                pass
+                logger.warning("Could not parse review count: %s", item[review_key])
         return None
 
     @staticmethod
     def _detect_condition(price_str: str) -> Optional[str]:
         """
-        Detect product condition from price string.
+        Detect product condition (e.g., new, used, refurbished) from price string.
 
         Args:
             price_str: Raw price string
@@ -189,6 +192,7 @@ class ProductNormalizer:
         """
         price_lower = price_str.lower()
 
+        # Simple keyword check
         if " refurbished" in price_lower:
             return "refurbished"
         elif " used" in price_lower:

@@ -30,7 +30,7 @@ class ProductEnricher:
         """Initialize the product enricher service with dependencies."""
         self.openai_service = openai_service
 
-        # Common headers to simulate a browser
+        # Common headers to simulate a browser during HTTP requests
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
@@ -42,10 +42,10 @@ class ProductEnricher:
 
     async def get_product_specs(self, product_id: str, product_url: str, name: Optional[str] = None) -> Dict[str, Any]:
         """
-        Retrieve detailed specifications for a product.
+        Retrieve detailed specifications for a product by fetching and parsing its page.
 
         Args:
-            product_id: Product identifier
+            product_id: Product identifier (used for logging and potentially cache keys)
             product_url: URL to the product page
             name: Optional product name for context
 
@@ -54,31 +54,31 @@ class ProductEnricher:
         """
         logger.info("🔍 Fetching specifications for product: %s", name or product_id)
 
-        # Check if URL is valid
         if not product_url or not product_url.startswith(("http://", "https://")):
             logger.warning("⚠️ Invalid product URL: %s", product_url)
             return {}
 
         try:
-            # Fetch HTML content from product page
+            # Fetch HTML content from product page (with potential headless fallback)
             html_content = await self._fetch_product_page(product_url)
 
             if not html_content:
                 logger.warning("⚠️ Failed to fetch product page: %s", product_url)
                 return {}
 
-            # Extract specifications from HTML
+            # Extract specifications from HTML (structured data -> AI fallback)
             specs = await self._extract_specifications(html_content, product_url, name)
 
-            # Add product identity information
-            specs["product_id"] = product_id
+            # Add product identity information if not already present from extraction
+            if "product_id" not in specs:
+                specs["product_id"] = product_id
             if name and "name" not in specs:
                 specs["name"] = name
 
             return specs
 
         except Exception as e:
-            logger.error("❌ Error fetching product specifications: %s", str(e))
+            logger.error("❌ Error fetching product specifications for %s: %s", product_url, e)
             return {}
 
     async def enrich_product(self, product: Product) -> Product:
@@ -109,8 +109,8 @@ class ProductEnricher:
             return enriched_product
 
         except Exception as e:
-            # Log specific error during enrichment process
-            logger.error("❌ Error during enrichment for product %s (%s): %s", product.id, product.url, str(e))
+            # Log specific error during the enrichment workflow
+            logger.error("❌ Error during enrichment for product %s (%s): %s", product.id, product.url, e)
             return product  # Return original product on failure
 
     def _update_product_from_specs(self, product: Product, specs: Dict[str, Any]) -> Product:
@@ -118,7 +118,7 @@ class ProductEnricher:
         Update a Product object with extracted specifications.
 
         Prioritizes existing product data unless the new data is clearly better
-        (e.g., longer description, more detailed specs).
+        (e.g., longer description, more detailed specs, or filling missing fields).
 
         Args:
             product: Original Product object
@@ -131,29 +131,26 @@ class ProductEnricher:
         if product.specifications is None:
             product.specifications = {}
 
-        # Helper function to check if a value is considered "empty" or non-informative
+        # Helper to check if a value is considered "empty" or uninformative
         def is_empty(value):
             return value is None or value == "" or str(value).lower() == "unknown" or str(value).lower() == "n/a"
 
-        # Map structured data fields carefully, avoiding overwriting good data
-        # Overwrite only if the existing value is empty/uninformative
+        # Update fields only if the existing value is empty/uninformative or new data is better
         if "brand" in specs and specs["brand"] and is_empty(product.brand):
             product.brand = str(specs["brand"]).strip()
 
-        # Only update description if the new one is significantly longer/more detailed
+        # Only update description if the new one is significantly better or fills a gap
         if "description" in specs and specs["description"]:
             new_desc = str(specs["description"]).strip()
             old_desc_len = len(product.description or "")
-            # Use relative length check and absolute minimum improvement
-            if len(new_desc) > old_desc_len * 1.2 and len(new_desc) > old_desc_len + 50:
+            # Criteria: significantly longer (relative + absolute) OR filling an empty description
+            if (len(new_desc) > old_desc_len * 1.2 and len(new_desc) > old_desc_len + 50) or (is_empty(product.description) and len(new_desc) > 20):
                 product.description = new_desc
-            elif is_empty(product.description) and len(new_desc) > 20:
-                product.description = new_desc  # Populate if empty
 
         if "category" in specs and specs["category"] and is_empty(product.category):
             product.category = str(specs["category"]).strip()
 
-        # Update rating/reviews only if missing
+        # Update rating/reviews only if missing from original product
         if "rating" in specs and specs["rating"] and is_empty(product.rating):
             try:
                 rating_val = float(specs["rating"])
@@ -167,9 +164,9 @@ class ProductEnricher:
                 if review_count_val >= 0:
                     product.review_count = review_count_val
             except (ValueError, TypeError):
-                pass
+                pass  # Ignore if review count is invalid
 
-        # Process specifications provided by AI (if structure is correct)
+        # Merge specifications dictionary provided by AI
         ai_specs_dict = specs.get("specifications")
         if isinstance(ai_specs_dict, dict):
             for key, value in ai_specs_dict.items():
@@ -179,19 +176,20 @@ class ProductEnricher:
                 if clean_key and clean_value and clean_key not in product.specifications:
                     product.specifications[clean_key] = clean_value
 
-        # Process features provided by AI
+        # Merge features list provided by AI (stored under a 'Features' key in specs)
         ai_features_list = specs.get("features")
         if isinstance(ai_features_list, list):
             valid_features = [str(f).strip() for f in ai_features_list if str(f).strip()]
+            # Add features only if the 'Features' spec doesn't already exist
             if valid_features and is_empty(product.specifications.get("Features")):
                 product.specifications["Features"] = ", ".join(valid_features)
 
-        # Re-validate to ensure type consistency after updates
+        # Re-validate the updated product model
         try:
             product_dict = product.model_dump()
             return Product.model_validate(product_dict)
         except Exception as e:
-            logger.error("❌ Validation error after updating product %s: %s", product.id, str(e))
+            logger.error("❌ Validation error after updating product %s: %s", product.id, e)
             return product  # Return original on validation error
 
     async def _fetch_product_page(self, url: str) -> Optional[str]:
@@ -205,72 +203,73 @@ class ProductEnricher:
             Optional[str]: HTML content or None if failed
         """
         html_content = None
-        # Attempt 1: Standard HTTP fetch
-        logger.debug(f"Attempting standard fetch for: {url}")
+        # Attempt 1: Standard HTTP fetch with aiohttp
+        logger.debug("Attempting standard fetch for: %s", url)
         try:
             async with aiohttp.ClientSession(headers=self.headers) as session:
                 async with session.get(url, timeout=10, allow_redirects=True) as response:
                     if 200 <= response.status < 300:
                         try:
+                            # Attempt decoding with utf-8 first
                             html_content = await response.text(encoding="utf-8", errors="ignore")
-                            logger.debug(f"Standard fetch successful for: {url}")
+                            logger.debug("Standard fetch successful for: %s", url)
                         except UnicodeDecodeError:
+                            # Fallback to detected encoding if utf-8 fails
                             try:
                                 detected_encoding = response.get_encoding()
                                 html_content = await response.text(encoding=detected_encoding, errors="ignore")
-                                logger.debug(f"Standard fetch successful (fallback encoding) for: {url}")
+                                logger.debug("Standard fetch successful (fallback encoding: %s) for: %s", detected_encoding, url)
                             except Exception as decode_err:
-                                logger.error(f"❌ Final decode failed for {url}: {decode_err}")
-                        # Check if content seems minimal (might indicate JS needed)
+                                logger.error("❌ Final decode failed for %s: %s", url, decode_err)
+                        # Check if content seems minimal (might indicate JS rendering required)
                         if html_content and len(html_content) < 1000:  # Arbitrary threshold
-                            logger.warning(f"⚠️ Standard fetch for {url} resulted in very short content ({len(html_content)} bytes). May require JS.")
-                            # Optionally clear content to trigger fallback if enabled
+                            logger.warning("⚠️ Standard fetch for %s resulted in short content (%d bytes). May require JS.", url, len(html_content))
+                            # If fallback enabled, setting html_content to None here would force it
                             # html_content = None
                     else:
-                        logger.warning(f"⚠️ Standard fetch failed for {url}, status: {response.status}")
+                        logger.warning("⚠️ Standard fetch failed for %s, status: %d", url, response.status)
 
         except asyncio.TimeoutError:
-            logger.warning(f"⏰ Timeout during standard fetch for: {url}")
+            logger.warning("⏰ Timeout during standard fetch for: %s", url)
         except aiohttp.ClientError as e:
-            logger.error(f"❌ HTTP client error during standard fetch for {url}: {type(e).__name__} - {str(e)}")
+            logger.error("❌ HTTP client error during standard fetch for %s: %s - %s", url, type(e).__name__, e)
         except Exception as e:
-            logger.error(f"❌ Unexpected error during standard fetch for {url}: {type(e).__name__} - {str(e)}")
+            logger.error("❌ Unexpected error during standard fetch for %s: %s - %s", url, type(e).__name__, e)
 
-        # Attempt 2: Headless browser fallback (if enabled and needed)
+        # Attempt 2: Headless browser fallback (if enabled and standard fetch failed/insufficient)
         if html_content is None and ENRICHMENT_USE_HEADLESS_FALLBACK:
-            logger.info(f"🚀 Standard fetch failed or insufficient for {url}, attempting headless browser fallback...")
+            logger.info("🚀 Standard fetch failed or insufficient for %s, attempting headless browser fallback...", url)
             try:
                 async with async_playwright() as p:
                     browser = None
                     connect_args = {}
                     if HEADLESS_BROWSER_ENDPOINT:
-                        logger.debug(f"Connecting to remote browser: {HEADLESS_BROWSER_ENDPOINT}")
-                        # Add headers or other args if needed for remote service auth
+                        logger.debug("Connecting to remote browser: %s", HEADLESS_BROWSER_ENDPOINT)
+                        # Add headers or other connection args if needed for remote service auth
                         browser = await p.chromium.connect_over_cdp(HEADLESS_BROWSER_ENDPOINT, **connect_args)
                     else:
                         logger.debug("Launching local headless browser...")
                         browser = await p.chromium.launch()
 
                     page = await browser.new_page(user_agent=self.headers["User-Agent"])
-                    # Increased navigation timeout
                     await page.goto(url, timeout=30000, wait_until="domcontentloaded")  # Wait for DOM, JS might still run
-                    # Optional: Add a small delay or wait for a specific selector if needed
+                    # Optional: Add delay or wait for specific selector if needed for heavy JS sites
                     # await page.wait_for_timeout(2000)
                     html_content = await page.content()
                     await browser.close()
-                    logger.info(f"✅ Headless browser fetch successful for: {url}")
+                    logger.info("✅ Headless browser fetch successful for: %s", url)
             except Exception as e:
-                logger.error(f"❌ Headless browser fallback failed for {url}: {type(e).__name__} - {str(e)}")
+                logger.error("❌ Headless browser fallback failed for %s: %s - %s", url, type(e).__name__, e)
                 html_content = None  # Ensure content is None if fallback fails
         elif html_content is None:
-            logger.warning(f"⚠️ Standard fetch failed for {url} and headless fallback is disabled.")
+            logger.warning("⚠️ Standard fetch failed for %s and headless fallback is disabled.", url)
 
         return html_content
 
     async def _extract_specifications(self, html_content: str, url: str, product_name: Optional[str] = None) -> Dict[str, Any]:
         """
         Extract product specifications using a tiered approach.
-        1. Try extracting structured data first (fast and reliable)
+        1. Try extracting structured data first (fast, reliable)
         2. Check if structured data is sufficient
         3. If not sufficient, fall back to AI extraction
 
@@ -284,7 +283,7 @@ class ProductEnricher:
         """
         all_specs = {}
         try:
-            # 1. Try extracting structured data first (fast and reliable)
+            # 1. Try extracting structured data first (fast, reliable)
             structured_data = self._extract_structured_data(html_content, url)
             if structured_data:
                 all_specs.update(structured_data)
@@ -297,13 +296,13 @@ class ProductEnricher:
 
             # 3. If not sufficient, fall back to AI extraction
             logger.info("ℹ️ Structured data insufficient, attempting AI extraction for %s", product_name or url)
-            # Add a small delay before hitting AI
+            # Add a small delay before hitting AI to be polite
             await asyncio.sleep(0.1)
             ai_specs = await self._extract_specs_with_ai(html_content, product_name)
 
-            # Merge AI specs, prioritizing existing structured data keys
+            # Merge AI specs, prioritizing existing structured data keys where overlaps occur
             if ai_specs:
-                # Merge specifications dictionary intelligently
+                # Merge 'specifications' dictionary intelligently
                 if isinstance(ai_specs.get("specifications"), dict) and isinstance(all_specs.get("specifications"), dict):
                     # Prioritize existing keys from structured data, add new ones from AI
                     merged_sub_specs = {**ai_specs["specifications"], **all_specs["specifications"]}
@@ -315,10 +314,11 @@ class ProductEnricher:
                 # The _update_product_from_specs method will handle the merging logic carefully
                 for key in ["brand", "category", "description", "features"]:
                     if key in ai_specs and ai_specs[key]:
-                        # Store AI value temporarily; merge logic is in update method
+                        # Store AI value temporarily; final merge/overwrite logic is in _update_product_from_specs
                         all_specs[f"ai_{key}"] = ai_specs[key]
 
-            # Clean up temporary keys before returning final specs for update method
+            # Prepare final specs dict for the update method by resolving temporary AI keys
+            # This ensures the update method gets a clean dict with the intended final values
             final_specs_for_update = {k: v for k, v in all_specs.items() if not k.startswith("ai_")}
             if "ai_brand" in all_specs:
                 final_specs_for_update["brand"] = all_specs["ai_brand"]
@@ -329,23 +329,45 @@ class ProductEnricher:
             if "ai_features" in all_specs:
                 final_specs_for_update["features"] = all_specs["ai_features"]
 
-            # If AI extraction happened, log the final count of top-level keys
+            # Log final state if AI extraction was attempted
             if ai_specs:
                 logger.info("ℹ️ Combined specs ready for update for %s (Keys: %d)", product_name or url, len(final_specs_for_update))
 
             return final_specs_for_update
 
         except Exception as e:
-            logger.error("❌ Error extracting specifications for %s: %s", product_name or url, str(e))
+            logger.error("❌ Error extracting specifications for %s: %s", product_name or url, e)
             return all_specs  # Return whatever was gathered, even if partial
 
     def _is_sufficiently_detailed(self, specs: Dict[str, Any]) -> bool:
-        """Check if extracted data is detailed enough to skip AI."""
-        # Example criteria: has a description and at least 3 other specification keys
+        """Check if extracted structured data is detailed enough to potentially skip AI fallback.
+
+        Criteria: Has a reasonable description and at least 3 other specific specification keys.
+        """
         has_desc = bool(specs.get("description") and len(str(specs["description"])) > 50)
-        # Count relevant spec keys (excluding common top-level ones)
+        # Count relevant spec keys (excluding common top-level ones like name, price, etc.)
         spec_keys = [
-            k for k in specs.keys() if k not in ["name", "brand", "description", "category", "price", "url", "image", "@type", "@context", "offers"]
+            k
+            for k in specs.keys()
+            if k
+            not in [
+                "name",
+                "brand",
+                "description",
+                "category",
+                "price",
+                "url",
+                "image",
+                "@type",
+                "@context",
+                "offers",
+                "availability",
+                "condition",
+                "currency",
+                "sku",
+                "mpn",
+                "gtin",
+            ]
         ]
         has_enough_specs = len(spec_keys) >= 3
         return has_desc and has_enough_specs
@@ -363,17 +385,20 @@ class ProductEnricher:
         """
         try:
             base_url = get_base_url(html_content, url)
+            # Extract metadata using extruct (supports JSON-LD, Microdata, OpenGraph)
             metadata = extruct.extract(html_content, base_url=base_url, uniform=True, syntaxes=["json-ld", "microdata", "opengraph"])
 
             specs = {}
 
             # Process JSON-LD data (highest priority)
             for item in metadata.get("json-ld", []):
+                # Look for Product schema types
                 if item.get("@type") == "Product" or item.get("@type") == "http://schema.org/Product":
-                    # Extract product properties
+                    # Extract common product properties
                     if "name" in item:
                         specs["name"] = item["name"]
                     if "brand" in item:
+                        # Handle brand being an object or string
                         if isinstance(item["brand"], dict):
                             specs["brand"] = item["brand"].get("name")
                         else:
@@ -386,10 +411,13 @@ class ProductEnricher:
                         specs["mpn"] = item["mpn"]
                     if "model" in item:
                         specs["model"] = item["model"]
+                    # Potentially add GTIN here too if needed: if "gtin" in item: specs["gtin"] = item["gtin"]
 
-                    # Extract detailed specs from product properties
+                    # Extract other properties as potential specifications
+                    # Excluding common/already handled fields
+                    excluded_keys = {"@context", "@type", "image", "url", "offers", "name", "brand", "description", "sku", "mpn", "model"}
                     for key, value in item.items():
-                        if key not in ["@context", "@type", "image", "url", "offers"]:
+                        if key not in excluded_keys:
                             specs[key] = value
 
                     # Process offers data
@@ -401,47 +429,61 @@ class ProductEnricher:
                             if "availability" in offer:
                                 specs["availability"] = offer["availability"]
                             if "itemCondition" in offer:
-                                specs["condition"] = offer["itemCondition"]
+                                # Map schema condition URL to simpler string if possible
+                                condition_url = offer["itemCondition"]
+                                if isinstance(condition_url, str):
+                                    specs["condition"] = condition_url.split("/")[-1].lower()  # e.g., NewCondition -> new
+                                else:
+                                    specs["condition"] = str(condition_url)  # Fallback
                         elif isinstance(offer, list) and offer:
-                            # Sometimes offers is a list, take the first one
+                            # If offers is a list, take the first one's details
                             first_offer = offer[0]
                             if isinstance(first_offer, dict):
                                 if "price" in first_offer:
                                     specs["price"] = first_offer["price"]
                                 if "availability" in first_offer:
                                     specs["availability"] = first_offer["availability"]
+                                if "itemCondition" in first_offer:
+                                    condition_url = first_offer["itemCondition"]
+                                    if isinstance(condition_url, str):
+                                        specs["condition"] = condition_url.split("/")[-1].lower()
+                                    else:
+                                        specs["condition"] = str(condition_url)
 
-            # Process microdata (second priority)
-            if len(specs) < 3:
+            # Process microdata (second priority, if JSON-LD wasn't sufficient)
+            if len(specs) < 3:  # Check if we have minimal data before trying next format
                 for item in metadata.get("microdata", []):
-                    if item.get("type") == "https://schema.org/Product" or item.get("type") == "http://schema.org/Product":
+                    if item.get("type") in ["https://schema.org/Product", "http://schema.org/Product"]:
                         props = item.get("properties", {})
                         for key, value in props.items():
+                            # If value is list, take first item, otherwise take value directly
                             if isinstance(value, list) and value:
                                 specs[key] = value[0]
                             else:
                                 specs[key] = value
 
             # Process OpenGraph data (third priority)
-            # Fix: OpenGraph data can be a list of dictionaries or a dictionary
             if len(specs) < 3:
-                og_data = metadata.get("opengraph", [])
-
-                # Handle different OpenGraph data formats
-                if isinstance(og_data, dict):
-                    self._extract_opengraph_dict(og_data, specs)
-                elif isinstance(og_data, list) and og_data and isinstance(og_data[0], dict):
-                    self._extract_opengraph_dict(og_data[0], specs)
+                og_data_list = metadata.get("opengraph", [])
+                # Handle OpenGraph sometimes being a list of dicts
+                if isinstance(og_data_list, list) and og_data_list:
+                    self._extract_opengraph_dict(og_data_list[0], specs)
+                # Handle OpenGraph potentially being a single dict (less common with extruct uniform=True)
+                elif isinstance(og_data_list, dict):
+                    self._extract_opengraph_dict(og_data_list, specs)
 
             return specs
 
         except Exception as e:
-            logger.warning("⚠️ Error extracting structured data: %s", str(e))
+            logger.warning("⚠️ Error extracting structured data: %s", e)
             return {}
 
     def _extract_opengraph_dict(self, og_dict: dict, specs: dict) -> None:
-        """Extract data from OpenGraph dictionary."""
-        # Access values safely with get() method
+        """Helper to extract relevant properties from an OpenGraph dictionary.
+
+        Only adds data if the corresponding key doesn't already exist in specs.
+        """
+        # Access values safely with get() and only add if key is missing
         if "og:title" in og_dict and "name" not in specs:
             specs["name"] = og_dict.get("og:title")
         if "og:description" in og_dict and "description" not in specs:
@@ -457,37 +499,38 @@ class ProductEnricher:
 
     def _clean_text(self, text: str) -> str:
         """
-        Clean and normalize text content.
+        Clean and normalize text content extracted from HTML.
 
         Args:
             text: Raw text content
 
         Returns:
-            str: Cleaned text
+            Cleaned text string.
         """
-        # Remove extra whitespace and normalize
+        # Remove extra whitespace and normalize line breaks
         cleaned = re.sub(r"\s+", " ", text).strip()
-        # Basic HTML entity decoding (might need more robust library like html.unescape)
+        # Basic HTML entity decoding (can be expanded or use html.unescape)
         cleaned = cleaned.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
         return cleaned
 
     async def _extract_specs_with_ai(self, html_content: str, product_name: Optional[str] = None) -> Dict[str, Any]:
         """
-        Use AI to extract specifications from HTML when structured data isn't found or sufficient.
-        Uses JSON mode for more reliable output.
+        Use AI (OpenAI function calling or similar) to extract specifications from HTML
+        when structured data isn't found or is insufficient.
+        Uses JSON mode for more reliable structured output.
 
         Args:
             html_content: HTML content from product page
             product_name: Optional product name for context
 
         Returns:
-            Dict[str, Any]: Extracted specifications as a dictionary
+            Dict[str, Any]: Extracted specifications as a dictionary, or empty dict on failure.
         """
         try:
-            # --- Improved HTML Cleaning & Content Extraction ---
+            # Parse HTML with BeautifulSoup
             soup = BeautifulSoup(html_content, "html.parser")
 
-            # Remove common non-content elements more aggressively
+            # Remove common non-content elements aggressively to clean input for AI
             for selector in [
                 "script",
                 "style",
@@ -514,9 +557,10 @@ class ProductEnricher:
                         element.extract()
 
             # --- Targeted Content Extraction ---
+            # Try to extract text from likely sections before falling back to broader content
             extracted_texts = []
 
-            # Common selectors for different parts of the product page
+            # Selectors for common product page sections
             content_selectors = {
                 "description": ["#productDescription", ".product-description", "#description", ".description", ".product-long-description"],
                 "specifications": [
@@ -528,30 +572,30 @@ class ProductEnricher:
                     ".prodDetTable",
                 ],
                 "features": [".feature-bullets", ".product-features", ".key-features", "#feature-bullets"],
-                "main_content": ["main", "#main", "#content", ".content", "#product-details", ".product-info", "article"],  # Fallback
+                "main_content": ["main", "#main", "#content", ".content", "#product-details", ".product-info", "article"],  # Fallback selectors
             }
 
-            processed_elements = set()
+            processed_elements = set()  # Keep track of elements already processed
 
             # Extract from specific sections first
             for section_name, selectors in content_selectors.items():
                 if section_name == "main_content":
-                    continue  # Handle fallback later
+                    continue  # Handle main content fallback later
                 for selector in selectors:
                     elements = soup.select(selector)
                     for element in elements:
                         if isinstance(element, Tag) and element not in processed_elements:
-                            # Extract text, maybe add a section header
                             section_text = element.get_text(separator="\n", strip=True)
                             if section_text:
+                                # Prepend section name for AI context
                                 extracted_texts.append(
                                     f"\n--- START {section_name.upper()} SECTION ---\n{section_text}\n--- END {section_name.upper()} SECTION ---\n"
                                 )
                                 processed_elements.add(element)
-                            # Optionally remove the processed element to avoid duplication if using fallback
+                            # Optionally remove the processed element to avoid duplication in fallback
                             # element.extract()
 
-            # If few specific sections found, try main content area
+            # If few specific sections found, try main content area as a fallback
             if len(extracted_texts) < 2:
                 logger.info("Few specific sections found, extracting from main content area for %s", product_name or "page")
                 for selector in content_selectors["main_content"]:
@@ -566,21 +610,20 @@ class ProductEnricher:
             final_text = "\n\n".join(extracted_texts)
 
             if not final_text:
-                # If absolutely nothing found, fallback to body text (less ideal)
+                # If targeted extraction yielded nothing, fallback to full body text (less reliable)
                 logger.warning("⚠️ Could not extract targeted sections for %s, falling back to full body text.", product_name or "page")
                 body = soup.find("body")
                 final_text = body.get_text(separator="\n", strip=True) if body else ""
 
             # Further clean the combined text (remove excessive newlines)
             cleaned_text = re.sub(r"\n{3,}", "\n\n", final_text).strip()
-            # --- End Targeted Content Extraction ---
 
             if not cleaned_text:
                 logger.error("❌ No processable text content found after cleaning for %s", product_name or "page")
                 return {}
 
-            # Limit text length for API efficiency (apply after cleaning)
-            max_len = 15000  # Keep token limit reasonable
+            # Limit text length for API efficiency and cost saving
+            max_len = 15000  # Adjust as needed based on model context window and cost
             if len(cleaned_text) > max_len:
                 text_to_send = cleaned_text[:max_len] + "\n... (truncated due to length)"
                 logger.warning("⚠️ Truncated targeted text content for AI extraction for %s (Sent %d chars)", product_name or "product", max_len)
@@ -588,9 +631,9 @@ class ProductEnricher:
                 text_to_send = cleaned_text
                 logger.info("ℹ️ Sending %d chars of targeted text to AI for %s", len(text_to_send), product_name or "product")
 
-            # Create AI prompt for structured extraction (Ensure it explicitly asks for JSON)
-            context = f' for the product named "{product_name}"' if product_name else ""
-            prompt = f"""Analyze the following text content extracted from specific sections of a product page{context}.
+            # Create AI prompt for structured extraction using JSON mode
+            context_str = f' for the product named "{product_name}"' if product_name else ""
+            prompt = f"""Analyze the following text content extracted from specific sections of a product page{context_str}.
 Your task is to extract key product information accurately.
 
 **Instructions:**
@@ -619,31 +662,30 @@ Your task is to extract key product information accurately.
                 prompt,
                 model=OPENAI_EXTRACTION_MODEL,  # Use dedicated model from config
                 max_tokens=2000,
-                use_json_mode=True,  # Enable JSON mode
+                use_json_mode=True,  # Enable JSON mode in OpenAI service
             )
 
-            # Parse JSON response (should be more reliable now)
+            # Parse JSON response (should be more reliable with JSON mode)
             try:
-                # JSON mode *should* guarantee valid JSON string
                 specs = json.loads(response)
                 if not isinstance(specs, dict):
                     logger.error("❌ AI JSON mode response was not a dict for %s. Response: %s", product_name or "product", response[:500])
                     return {}
 
-                # Optional: Basic validation of expected keys
+                # Basic validation of expected keys (optional but recommended)
                 expected_keys = {"description", "specifications", "features", "brand", "category"}
                 if not expected_keys.issubset(specs.keys()):
                     logger.warning("⚠️ AI JSON response missing expected keys for %s. Found: %s", product_name or "product", list(specs.keys()))
-                    # Proceed anyway, but log warning
+                    # Proceed anyway, but log the warning
 
                 logger.info("✅ Successfully extracted data with AI (JSON Mode) for %s", product_name or "product")
                 return specs
 
             except json.JSONDecodeError as e:
-                # This should be less common with JSON mode, but handle just in case
-                logger.error("❌ Failed to parse AI JSON mode response for %s: %s\nResponse: %s", product_name or "product", str(e), response[:500])
+                # This should be rare with JSON mode, but handle defensively
+                logger.error("❌ Failed to parse AI JSON mode response for %s: %s\nResponse: %s", product_name or "product", e, response[:500])
                 return {}
 
         except Exception as e:
-            logger.error("❌ Error using AI to extract specifications for %s: %s", product_name or "product", str(e))
+            logger.error("❌ Error using AI to extract specifications for %s: %s", product_name or "product", e)
             return {}  # Return empty dict on failure

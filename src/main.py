@@ -16,25 +16,24 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Attach the imported limiter to the app state
+# Attach limiter to app state for use by handlers/dependencies if needed
 app.state.limiter = limiter
 
-# Add the exception handler to the app
+# Add rate limit exceeded exception handler
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore
 
-# Allow frontend apps to communicate with the API
+# Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all domains (change this in production!)
+    allow_origins=["*"],  # WARNING: Allow all domains for dev; restrict in production!
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Add the custom authentication middleware
-# This should generally run before other app-specific logic but after CORS
+# Add custom authentication middleware (runs after CORS, before routes)
 app.add_middleware(AuthMiddleware)
 
-# Include routers
+# Include API routers
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(routes.router, prefix="/api", tags=["search"])

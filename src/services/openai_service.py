@@ -13,10 +13,10 @@ from src.utils.config import OPENAI_CHAT_MODEL, OPENAI_EMBEDDING_MODEL
 
 class OpenAIService:
     """
-    Handles interactions with OpenAI API for AI-powered query parsing.
+    Handles interactions with OpenAI API for AI-powered tasks.
 
-    Provides business logic layer on top of OpenAI API interactions,
-    including retries, error handling, and data normalization.
+    Provides a business logic layer on top of OpenAI API interactions,
+    including retries, error handling, and response processing.
     """
 
     def __init__(self, api_key: Optional[str] = None):
@@ -31,44 +31,34 @@ class OpenAIService:
     @retry(
         stop=stop_after_attempt(3),  # Retry 3 times
         wait=wait_fixed(2),  # Wait 2 seconds between retries
-        retry=retry_if_exception_type(openai.OpenAIError),  # Retry only OpenAI errors
+        retry=retry_if_exception_type(openai.OpenAIError),  # Retry only OpenAI API errors
     )
-    def generate_response(
-        self,
-        prompt: str,
-        model: str = OPENAI_CHAT_MODEL,  # Use config default
-        max_tokens: int = 1500,
-        use_json_mode: bool = False,  # ADDED: Flag to enable JSON mode
-    ) -> str:
+    def generate_response(self, prompt: str, model: str = OPENAI_CHAT_MODEL, max_tokens: int = 1500, use_json_mode: bool = False) -> str:
         """
-        Generates a response from OpenAI. Retries on failure.
+        Generates a response from OpenAI's chat completion API. Retries on failure.
 
         Args:
-            prompt: Text prompt to send to the model
-            model: OpenAI model to use
-            max_tokens: Maximum tokens for the response
-            use_json_mode: If True, request JSON output from the model # ADDED
+            prompt: Text prompt to send to the model (acts as system message).
+            model: OpenAI model identifier.
+            max_tokens: Maximum tokens for the response.
+            use_json_mode: If True, request JSON output from the model.
 
         Returns:
-            str: Generated text response (potentially JSON string if use_json_mode=True)
+            Generated text response (potentially a JSON string if use_json_mode=True).
 
         Raises:
             OpenAIServiceError: If the API call fails after retries
         """
         try:
             # IMPORTANT: For JSON mode, the prompt MUST instruct the model to produce JSON.
-            # The API enforces this. Our extraction prompt already does this.
+            # The API enforces this. Ensure prompts used with this flag meet this requirement.
             messages = [self.client.create_message(role="system", content=prompt)]
 
             # Set response_format if JSON mode requested
             response_format_arg = {"type": "json_object"} if use_json_mode else None
 
             response = self.client.create_chat_completion(
-                messages=messages,
-                model=model,
-                temperature=0.2,
-                max_tokens=max_tokens,
-                response_format=response_format_arg,  # Pass the format arg
+                messages=messages, model=model, temperature=0.2, max_tokens=max_tokens, response_format=response_format_arg
             )
             content = response.choices[0].message.content
             if not content:
@@ -76,23 +66,23 @@ class OpenAIService:
             return content
 
         except openai.OpenAIError as e:
-            logger.error("❌ OpenAI API returned an error: %s", str(e))
+            logger.error("❌ OpenAI API returned an error: %s", e)
             raise OpenAIServiceError("OpenAI API error") from e
 
         except Exception as e:
-            logger.error("❌ Unexpected OpenAI error: %s", str(e))
+            logger.error("❌ Unexpected OpenAI error: %s", e)
             raise OpenAIServiceError("Unexpected OpenAI Failure") from e
 
-    def generate_embedding(self, text: Union[str, List[str]], model: str = OPENAI_EMBEDDING_MODEL) -> np.ndarray:  # Use config default
+    def generate_embedding(self, text: Union[str, List[str]], model: str = OPENAI_EMBEDDING_MODEL) -> np.ndarray:
         """
         Generate embedding vector(s) for text using OpenAI's embedding model.
 
         Args:
-            text: Single text or list of texts to embed
-            model: OpenAI embedding model to use
+            text: Single text string or list of text strings to embed.
+            model: OpenAI embedding model identifier.
 
         Returns:
-            np.ndarray: Array of shape (n_texts, embedding_dim)
+            Numpy array of shape (n_texts, embedding_dim).
 
         Raises:
             OpenAIServiceError: If the API call fails
@@ -104,5 +94,5 @@ class OpenAIService:
             return np.array([item.embedding for item in embeddings])
 
         except (openai.OpenAIError, ValueError, TypeError) as e:
-            logger.error("❌ Error generating embedding: %s", str(e))
+            logger.error("❌ Error generating embedding: %s", e)
             raise OpenAIServiceError("Failed to generate embedding") from e

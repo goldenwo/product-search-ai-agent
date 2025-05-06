@@ -40,10 +40,13 @@ async def search(
     search_agent: SearchAgent = Depends(get_search_agent),
 ):
     """
-    AI-powered product search with authentication and caching.
+    AI-powered product search endpoint.
+
+    Requires authentication. Performs search, enrichment, and ranking.
+    Handles caching of final search results.
 
     Args:
-        request: FastAPI request object (used by rate limiter)
+        request: FastAPI request object (used by rate limiter).
         query: Search query string
         auth: JWT bearer token for authentication
 
@@ -55,11 +58,11 @@ async def search(
     """
     email = ""
     try:
-        # Verify token using the injected auth_service
+        # Verify JWT token and get user email
         email = auth_service.verify_token(auth.credentials)
-        logger.info(f"Authenticated search request for user: {email}")
+        logger.info("Authenticated search request for user: %s", email)
     except HTTPException as exc:
-        logger.warning(f"Search authentication failed: {exc.detail}")
+        logger.warning("Search authentication failed: %s", exc.detail)
         raise
 
     # Sanitize input
@@ -70,56 +73,57 @@ async def search(
     if len(query) > 500:
         return {"error": "Query too long (max 500 characters)"}
 
-    # --- Wrapped main logic in try/except for better error scoping ---
+    # --- Search Logic with Caching ---
     try:
-        # Use injected redis_cache
+        # Use user-specific cache key for search results
         cache_key = f"search:{email}:{query.lower()}"
         cached_results = None
         try:
             cached_results = await redis_cache.get_cache(cache_key)
         except Exception as redis_err:
-            logger.error(f"⚠️ Redis cache GET error for key '{cache_key}' (User: {email}): {redis_err}. Proceeding without cache.")
+            # Log Redis error but proceed without cache
+            logger.error("⚠️ Redis cache GET error for key '%s' (User: %s): %s. Proceeding without cache.", cache_key, email, redis_err)
 
         if cached_results:
-            logger.info(f"Cache hit for search query: '{query}'. User: {email}")
+            logger.info("Cache hit for search query: '%s'. User: %s", query, email)
             return {"query": query, "cached": True, "results": cached_results, "user": email}
         else:
-            logger.info(f"Cache miss for search query: '{query}'. User: {email}. Processing request.")
+            logger.info("Cache miss for search query: '%s'. User: %s. Processing request.", query, email)
 
-        # Use the injected search_agent instance
+        # Execute the core search logic via the agent
         products = await search_agent.search(query, top_n=10)
 
         search_results = [product.to_json() for product in products]
 
         if not search_results:
-            logger.info(f"No products found for query: '{query}'. User: {email}")
+            logger.info("No products found for query: '%s'. User: %s", query, email)
             return {"query": query, "results": [], "message": "No products found", "user": email}
 
+        # Cache the results
         try:
-            # Use injected redis_cache
-            await redis_cache.set_cache(cache_key, search_results)
-            logger.info(f"Cached search results for key: '{cache_key}'. User: {email}")
+            await redis_cache.set_cache(cache_key, search_results)  # Uses default TTL from config
+            logger.info("Cached search results for key: '%s'. User: %s", cache_key, email)
         except Exception as redis_err:
-            logger.error(f"⚠️ Redis cache SET error for key '{cache_key}' (User: {email}): {redis_err}. Results returned but not cached.")
+            # Log Redis error but return results anyway
+            logger.error("⚠️ Redis cache SET error for key '%s' (User: %s): %s. Results returned but not cached.", cache_key, email, redis_err)
 
         return {"query": query, "cached": False, "results": search_results, "user": email}
 
-    # --- Specific Error Handling ---
+    # --- Error Handling ---
     except RateLimitExceeded as e:
-        # Logged automatically by slowapi's handler usually, but good to note
-        logger.warning(f"Rate limit exceeded for user {email}. Detail: {e.detail}")
-        # Re-raise standard HTTPException
+        # Note: Rate limit errors are also handled globally in main.py
+        logger.warning("Rate limit exceeded for user %s. Detail: %s", email, e.detail)
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=f"Rate limit exceeded: {e.detail}")
     except (OpenAIServiceError, SerpAPIException) as e:
-        logger.error(f"❌ Service error during search for query '{query}', User '{email}': {str(e)}")
-        # Use status code from the exception if available, default to 503 Service Unavailable
+        logger.error("❌ Service error during search for query '%s', User '%s': %s", query, email, e)
+        # Use status code from the custom exception if available, default to 503
         status_code = getattr(e, "status_code", 503)
         raise HTTPException(status_code=status_code, detail="Service temporarily unavailable, please try again later.")
     except ValueError as e:
-        # Catch specific ValueErrors potentially raised by deeper logic (e.g., parsing)
-        logger.error(f"❌ Invalid data encountered during search for query '{query}', User '{email}': {str(e)}")
+        # Catch specific ValueErrors potentially raised by deeper logic (e.g., data parsing)
+        logger.error("❌ Invalid data encountered during search for query '%s', User '%s': %s", query, email, e)
         raise HTTPException(status_code=400, detail="Invalid data encountered during search.")
     except Exception as e:
         # Catch-all for unexpected errors during the search agent's processing
-        logger.exception(f"💥 Unexpected internal error during search for query '{query}', User '{email}': {str(e)}")
+        logger.exception("💥 Unexpected internal error during search for query '%s', User '%s': %s", query, email, e)
         raise HTTPException(status_code=500, detail="An internal server error occurred processing your request.")
