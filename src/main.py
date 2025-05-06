@@ -2,8 +2,11 @@
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from src.api import auth, routes
+from src.dependencies import limiter
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -11,6 +14,12 @@ app = FastAPI(
     description="An AI-driven product search system using OpenAI, FAISS, and live store data.",
     version="1.0.0",
 )
+
+# Attach the imported limiter to the app state
+app.state.limiter = limiter
+
+# Add the exception handler to the app
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore
 
 # Allow frontend apps to communicate with the API
 app.add_middleware(

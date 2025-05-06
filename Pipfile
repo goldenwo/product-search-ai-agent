@@ -49,13 +49,15 @@ aiohttp = "*"
 pytest-asyncio = "*"
 pyjwt = {extras = ["crypto"], version = "*"}
 passlib = {extras = ["bcrypt"], version = "*"}
-redis = {extras = ["hiredis"], version = ">=4.2.0"}
 sqlalchemy = "*"
 email-validator = "*"
 asyncpg = "*"
 sendgrid = "*"
 extruct = "*"
 w3lib = "*"
+slowapi = "*"
+redis = "*"
+playwright = "*"
 
 [dev-packages]
 pre-commit = "*"

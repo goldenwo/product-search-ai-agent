@@ -1,17 +1,34 @@
 """Search agent that coordinates the entire AI product search flow."""
 
 import asyncio
+import hashlib
 import json
 import re
 import time
-from typing import List, Optional
+from typing import List
+
+import redis
 
 from src.models.product import Product
-from src.services.factory import SerpProvider, SerpServiceFactory
 from src.services.openai_service import OpenAIService
 from src.services.product_enricher import ProductEnricher
 from src.services.redis_service import RedisService
-from src.utils import logger
+from src.services.serp_service import SerpService
+from src.utils import OpenAIServiceError, logger
+from src.utils.config import (
+    CACHE_ENRICHED_PRODUCT_TTL,
+    CACHE_RANKING_TTL,
+    ENRICHMENT_MAX_PARALLEL,
+    OPENAI_CHAT_MODEL,
+    SEARCH_ENRICHMENT_COUNT,
+    SEARCH_INITIAL_FETCH_COUNT,
+    SEARCH_RANKING_LIMIT,
+)
+
+# Constants for Cache Prefixes (DX Improvement)
+CACHE_PREFIX_ENRICHED = "enriched_product"
+CACHE_PREFIX_RANKING = "ranking"
+CACHE_PREFIX_SEARCH = "search"
 
 
 class SearchAgent:
@@ -31,19 +48,35 @@ class SearchAgent:
         redis_cache: Service for caching results
     """
 
-    def __init__(self, redis_cache: Optional[RedisService] = None, serp_provider: str = SerpProvider.SERPER):
+    def __init__(
+        self,
+        redis_cache: RedisService,
+        openai_service: OpenAIService,
+        serp_service: SerpService,
+        product_enricher: ProductEnricher,
+        # Keep serp_provider optional if needed for direct instantiation elsewhere, but dependency injection is preferred
+        # serp_provider: str = SerpProvider.SERPER
+    ):
         """
-        Initialize services needed for product search.
+        Initialize services needed for product search via dependency injection.
 
         Args:
-            redis_cache: Optional shared Redis service instance
-            serp_provider: SERP API provider to use
+            redis_cache: Shared Redis service instance
+            openai_service: OpenAI service instance
+            serp_service: SERP service instance
+            product_enricher: Product enricher instance
         """
-        self.openai_service = OpenAIService()
-        self.serp_service = SerpServiceFactory.create(provider=serp_provider)
-        self.product_enricher = ProductEnricher()
-        # Use provided Redis service or create a new one if not provided
-        self.redis_cache = redis_cache or RedisService()
+        # Assign injected services
+        self.openai_service = openai_service
+        self.serp_service = serp_service
+        self.product_enricher = product_enricher
+        self.redis_cache = redis_cache
+
+        # REMOVED: Internal instantiation of services
+        # self.openai_service = OpenAIService()
+        # self.serp_service = SerpServiceFactory.create(provider=serp_provider)
+        # self.product_enricher = ProductEnricher()
+        # self.redis_cache = redis_cache or RedisService()
 
     async def search(self, query: str, top_n: int = 10) -> List[Product]:
         """
@@ -57,53 +90,64 @@ class SearchAgent:
             List[Product]: Ranked and enriched products
 
         This method uses a tiered approach to efficiently process results:
-        1. Get initial products (2x requested amount)
-        2. Perform basic ranking on all products
-        3. Deeply enrich only the top candidates
-        4. Final re-ranking with enriched data
+        1. Get initial products using configured fetch count.
+        2. Selectively enrich top candidates based on configured enrichment count.
+        3. Perform final ranking on relevant products using configured ranking limit.
         """
         start_time = time.time()
-        logger.info("🔍 Starting search for query: %s", query)
+        logger.info("🔍 Starting search for query: '%s'", query)
 
-        # Get initial products (2x requested amount for better filtering)
-        initial_fetch_count = min(top_n * 2, 20)  # Cap at 20 to avoid excessive API usage
-        # Use correct parameter name (num instead of limit)
-        products = await self.serp_service.search_products(query, num_results=initial_fetch_count)
+        try:
+            # Fetch initial products using configured count
+            # Clamp fetch count to a reasonable maximum (e.g., 50) regardless of config
+            initial_fetch_count = min(SEARCH_INITIAL_FETCH_COUNT, 50)
+            logger.info(f"Fetching initial {initial_fetch_count} products...")
+            products = await self.serp_service.search_products(query, num_results=initial_fetch_count)
 
-        if not products:
-            logger.warning("⚠️ No products found for query: %s", query)
+            if not products:
+                logger.warning("⚠️ No products found for query: %s", query)
+                return []
+
+            # --- Selective Enrichment Strategy ---
+            # Enrich top N candidates based on config, ensuring it doesn't exceed fetched count
+            enrichment_candidates_count = min(SEARCH_ENRICHMENT_COUNT, len(products))
+            if enrichment_candidates_count > 0:
+                logger.info(f"🎯 Selecting top {enrichment_candidates_count} candidates for enrichment.")
+                products_to_enrich = products[:enrichment_candidates_count]
+                enriched_candidates = await self._enrich_products(products_to_enrich)
+                enriched_map = {p.id: p for p in enriched_candidates}
+            else:
+                logger.info("📋 Skipping enrichment based on configuration (SEARCH_ENRICHMENT_COUNT=0).")
+                enriched_map = {}
+
+            # Create the final list for ranking: enriched candidates + non-enriched products
+            # Use ALL initially fetched products as the base for ranking consideration
+            products_for_ranking = [enriched_map.get(p.id, p) for p in products]
+            # Limit the number of products actually sent to the ranking model based on config
+            products_to_rank = products_for_ranking[: min(SEARCH_RANKING_LIMIT, len(products_for_ranking))]
+
+            # Final ranking with potentially mixed enriched/non-enriched data
+            logger.info("🏆 Performing final ranking on %d products (limit %d)", len(products_to_rank), SEARCH_RANKING_LIMIT)
+            final_ranked_products = await self._rank_products(query, products_to_rank)
+
+            # Trim to requested number
+            result = final_ranked_products[:top_n]
+
+            elapsed_time = time.time() - start_time
+            logger.info("✅ Search completed in %.2f seconds, returning %d products", elapsed_time, len(result))
+
+            return result
+        except Exception as e:
+            logger.error("❌ Unexpected error during search: %s", str(e))
             return []
 
-        # First-pass ranking based on initial data
-        logger.info("🏆 Performing initial ranking on %d products", len(products))
-        ranked_products = await self._rank_products(query, products)
-
-        # Select top candidates for enrichment (1.5x requested to allow for filtering)
-        enrichment_candidates = ranked_products[: min(top_n * 3 // 2, 15)]
-
-        # Selectively enrich top products
-        logger.info("🔍 Enriching top %d products with detailed specifications", len(enrichment_candidates))
-        enriched_products = await self._enrich_products(enrichment_candidates)
-
-        # Final ranking with enriched data
-        logger.info("🏆 Performing final ranking with enriched data")
-        final_ranked_products = await self._rank_products(query, enriched_products)
-
-        # Trim to requested number
-        result = final_ranked_products[:top_n]
-
-        elapsed_time = time.time() - start_time
-        logger.info("✅ Search completed in %.2f seconds, returning %d products", elapsed_time, len(result))
-
-        return result
-
-    async def _enrich_products(self, products: List[Product], max_parallel: int = 3) -> List[Product]:
+    async def _enrich_products(self, products: List[Product], max_parallel: int = ENRICHMENT_MAX_PARALLEL) -> List[Product]:
         """
         Enrich products with specifications in controlled batches.
 
         Args:
             products: List of products to enrich
-            max_parallel: Maximum number of products to process in parallel
+            max_parallel: Maximum number of products to process in parallel (defaults to config value)
 
         Returns:
             List[Product]: Enriched products with detailed specifications
@@ -111,44 +155,51 @@ class SearchAgent:
         if not products:
             return []
 
-        # Filter out products that already have rich data
-        enrichment_candidates = []
-        for product in products:
-            # Skip products that already have rich data
-            if product.description and len(product.description) > 100 and product.has_specifications() and len(product.specifications) > 5:
-                logger.info("📋 Product %s already has rich data, skipping enrichment", product.id)
-                continue
+        # Use the effective max_parallel value from argument or config
+        effective_max_parallel = max_parallel
 
-            enrichment_candidates.append(product)
-
-        if not enrichment_candidates:
-            return products
-
-        # Process in batches to control API usage
-        logger.info("📋 Enriching %d products in batches of %d", len(enrichment_candidates), max_parallel)
-        enriched_products = []
-        batches = [enrichment_candidates[i : i + max_parallel] for i in range(0, len(enrichment_candidates), max_parallel)]
+        # Process in batches to control API usage and potential rate limits
+        logger.info("📋 Enriching %d products in batches of %d", len(products), effective_max_parallel)
+        enriched_results = []
+        # Use the original products list directly
+        batches = [products[i : i + effective_max_parallel] for i in range(0, len(products), effective_max_parallel)]
 
         for batch_idx, batch in enumerate(batches):
-            logger.info("📋 Processing batch %d/%d with %d products", batch_idx + 1, len(batches), len(batch))
-
+            logger.info("🔄 Processing enrichment batch %d/%d with %d products", batch_idx + 1, len(batches), len(batch))
             # Process batch with caching
-            enriched_batch = await asyncio.gather(*(self._enrich_with_cache(product) for product in batch))
-            enriched_products.extend(enriched_batch)
+            enriched_batch_results = await asyncio.gather(*(self._enrich_with_cache(product) for product in batch))
+            enriched_results.extend(enriched_batch_results)
+            # Add a small delay between batches to be kind to target servers & APIs
+            if len(batches) > 1 and batch_idx < len(batches) - 1:
+                await asyncio.sleep(0.3)
+        # No need to merge back, enriched_results contains the processed products
+        return enriched_results
 
-            # Add a small delay between batches to prevent rate limiting
-            if batch_idx < len(batches) - 1:
-                await asyncio.sleep(0.5)
+    def _get_stable_enrichment_cache_key(self, product: Product) -> str:
+        """Generates a stable cache key for enriched product data."""
+        # Ensure specifications exist before accessing
+        specs = product.specifications or {}
+        # Prioritize a unique ID from SERP if available
+        stable_id_part = specs.get("productId") or specs.get("product_id") or specs.get("sku") or specs.get("mpn")
 
-        # Update original products list with enriched data
-        enriched_map = {p.id: p for p in enriched_products}
-        result = [enriched_map.get(p.id, p) for p in products]
+        # Use appropriate cache prefix
+        if stable_id_part:
+            key = f"{CACHE_PREFIX_ENRICHED}_id:{stable_id_part}"
+        elif product.url:
+            url_str = str(product.url)
+            url_parts = url_str.split("?")[0].split("#")[0]
+            url_hash = hashlib.sha256(url_parts.encode()).hexdigest()
+            key = f"{CACHE_PREFIX_ENRICHED}_urlhash:{url_hash}"
+        else:
+            key = f"{CACHE_PREFIX_ENRICHED}_unstable:{product.id}"
+            logger.warning("⚠️ Using potentially unstable cache key for product without URL or stable ID: %s", product.title)
 
-        return result
+        return key
 
     async def _enrich_with_cache(self, product: Product) -> Product:
         """
-        Enrich a product with caching to avoid redundant API calls.
+        Enrich a product with caching, using a stable key.
+        Caches the full Product object as JSON.
 
         Args:
             product: Product to enrich
@@ -156,35 +207,73 @@ class SearchAgent:
         Returns:
             Product: Enriched product with specifications
         """
-        # Create a cache key based on product ID and URL
-        cache_key = f"enriched_product:{product.id}"
+        cache_key = self._get_stable_enrichment_cache_key(product)
+        logger.debug("Using enrichment cache key: %s for product %s ('%s')", cache_key, product.id, product.title[:30])
 
         # Try to get from cache first
-        cached_specs = await self.redis_cache.get_cache(cache_key)
-        if cached_specs:
-            logger.info("📋 Using cached specifications for product %s", product.id)
-            # Update product with cached specs
-            for key, value in cached_specs.items():
-                if key not in product.specifications:
-                    product.specifications[key] = value
-            return product
-
-        # If not in cache, perform enrichment
+        cached_product_json = None
+        # --- Add Redis Error Handling ---
         try:
-            logger.info("📋 Enriching product %s from URL %s", product.id, product.url)
-            enriched_product = await self.product_enricher.enrich_product(product)
+            cached_product_json = await self.redis_cache.get_cache(cache_key)
+        except redis.RedisError as redis_err:
+            logger.error(f"⚠️ Redis cache GET error for key '{cache_key}': {redis_err}. Will attempt enrichment.")
+        except Exception as e:
+            logger.error(f"❌ Unexpected error during enrichment cache GET for key '{cache_key}': {e}. Will attempt enrichment.")
+        # --- End Redis Error Handling ---
 
-            # Cache the specifications (1 day TTL)
-            if enriched_product.specifications:
+        if cached_product_json:
+            try:
+                # Attempt to reconstruct the Product object from cached JSON
+                enriched_product = Product.model_validate(cached_product_json)
+                logger.info("✅ Cache hit for enriched product %s (Key: %s)", product.id, cache_key)
+                return enriched_product
+            except Exception as e:
+                logger.warning("⚠️ Cache validation failed for product %s (Key: %s): %s. Re-enriching.", product.id, cache_key, str(e))
+                # Proceed to enrichment if cache is invalid
+        else:
+            # Log miss only if no redis error occurred
+            if cached_product_json is None:  # Check specifically for None, not just falsy
+                logger.info("❌ Cache miss for enriched product %s (Key: %s)", product.id, cache_key)
+
+        # If not in cache or cache invalid, perform enrichment
+        try:
+            logger.info("⏳ Enriching product %s from URL %s", product.id, product.url)
+            start_enrich_time = time.time()
+            enriched_product = await self.product_enricher.enrich_product(product)
+            enrich_duration = time.time() - start_enrich_time
+            # Log if enrichment actually added data
+            if enriched_product.description != product.description or enriched_product.specifications != product.specifications:
+                # Log details about what changed (e.g., description length, number of specs)
+                desc_len_change = len(enriched_product.description or "") - len(product.description or "")
+                spec_count_change = len(enriched_product.specifications or {}) - len(product.specifications or {})
+                logger.info(
+                    "✨ Enrichment added data for product %s (Desc chars: %+d, Specs: %+d) (%.2f seconds)",
+                    product.id,
+                    desc_len_change,
+                    spec_count_change,
+                    enrich_duration,
+                )
+            else:
+                logger.info("☑️ Enrichment completed for product %s, but no new data added (%.2f seconds)", product.id, enrich_duration)
+
+            # Cache the entire enriched product data as JSON using configured TTL
+            # --- Add Redis Error Handling ---
+            try:
                 await self.redis_cache.set_cache(
                     cache_key,
-                    enriched_product.specifications,
-                    ttl=86400,  # Cache for 24 hours
+                    enriched_product.model_dump(mode="json"),
+                    ttl=CACHE_ENRICHED_PRODUCT_TTL,
                 )
-
+                logger.info("💾 Cached enriched data for product %s (Key: %s, TTL: %ds)", product.id, cache_key, CACHE_ENRICHED_PRODUCT_TTL)
+            except redis.RedisError as redis_err:
+                logger.error(f"⚠️ Redis cache SET error for enrichment key '{cache_key}': {redis_err}. Enrichment completed but not cached.")
+            except Exception as e:
+                logger.error(f"❌ Unexpected error during enrichment cache SET for key '{cache_key}': {e}")
+            # --- End Redis Error Handling ---
             return enriched_product
+
         except Exception as e:
-            logger.error("❌ Error enriching product %s: %s", product.id, str(e))
+            logger.error("❌ Error during enrichment process for product %s (Key: %s): %s", product.id, cache_key, str(e))
             return product  # Return original product if enrichment fails
 
     async def _rank_products(self, query: str, products: List[Product]) -> List[Product]:
@@ -193,7 +282,7 @@ class SearchAgent:
 
         Args:
             query: User search query
-            products: List of products to rank
+            products: List of products to rank (potentially mixed enrichment levels)
 
         Returns:
             List[Product]: Products sorted by relevance score
@@ -202,51 +291,125 @@ class SearchAgent:
             return []
 
         # For very small result sets, skip expensive ranking
-        if len(products) <= 3:
-            # Just assign simple scores
-            for i, product in enumerate(products):
-                product.relevance_score = 1.0 - (i * 0.1)
+        if len(products) <= 1:  # Rank even single product for consistency, but skip >1 check
+            if products:
+                products[0].relevance_score = 1.0
+                products[0].relevance_explanation = "Top result based on initial fetch."
             return products
 
         # Check if we have cached ranking for this query and product set
-        product_ids = "-".join(sorted([p.id for p in products]))
-        rank_cache_key = f"ranking:{query.lower()}:{product_ids}"
+        # Ensure IDs used in the key are stable if possible (using the same logic as enrichment key)
+        stable_product_ids = sorted([self._get_stable_enrichment_cache_key(p) for p in products])
+        product_ids_key_part = "-".join(stable_product_ids)
+        # Hash the long product ID string to keep cache key size manageable
+        product_set_hash = hashlib.sha256(product_ids_key_part.encode()).hexdigest()[:16]
+        rank_cache_key = f"{CACHE_PREFIX_RANKING}:{query.lower()}:{product_set_hash}"
+        logger.debug("Using ranking cache key: %s", rank_cache_key)
 
-        cached_ranking = await self.redis_cache.get_cache(rank_cache_key)
+        cached_ranking = None
+        # --- Add Redis Error Handling ---
+        try:
+            cached_ranking = await self.redis_cache.get_cache(rank_cache_key)
+        except redis.RedisError as redis_err:
+            logger.error(f"⚠️ Redis cache GET error for ranking key '{rank_cache_key}': {redis_err}. Will attempt ranking.")
+        except Exception as e:
+            logger.error(f"❌ Unexpected error during ranking cache GET for key '{rank_cache_key}': {e}. Will attempt ranking.")
+        # --- End Redis Error Handling ---
+
         if cached_ranking:
-            logger.info("🏆 Using cached ranking for query: %s", query)
-            ranked_products = products.copy()
+            logger.info("✅ Cache hit for ranking query: '%s' (Key: %s)", query, rank_cache_key)
+            ranked_products = products.copy()  # Work on a copy
 
-            # Apply cached relevance scores
-            for product in ranked_products:
-                if product.id in cached_ranking:
-                    product.relevance_score = cached_ranking[product.id]["score"]
-                    product.relevance_explanation = cached_ranking[product.id].get("explanation", None)
+            # Apply cached relevance scores and explanations
+            # Need to map cached data back to products using a stable ID
+            product_map_for_cache = {self._get_stable_enrichment_cache_key(p): p for p in ranked_products}
+            found_in_cache_count = 0
 
-            # Sort by relevance score
-            ranked_products.sort(key=lambda p: p.relevance_score or 0.0, reverse=True)
+            # Ensure cached_ranking is a dictionary before iterating
+            if isinstance(cached_ranking, dict):
+                for cache_id_key, rank_data in cached_ranking.items():
+                    if cache_id_key in product_map_for_cache:
+                        product = product_map_for_cache[cache_id_key]
+                        # Safely apply rank data
+                        try:
+                            product.relevance_score = float(rank_data.get("score")) if rank_data.get("score") is not None else None
+                            product.relevance_explanation = rank_data.get("explanation")
+                            # Apply cached category scores if present
+                            if "category_scores" in rank_data:
+                                self._apply_category_scores(product, rank_data["category_scores"], rank_data.get("category_definitions", {}))
+                            found_in_cache_count += 1
+                        except (ValueError, TypeError) as parse_err:
+                            logger.warning(f"⚠️ Error applying cached rank data for {cache_id_key}: {parse_err}")
+                            product.relevance_score = None  # Nullify score if cached data is bad
+                    else:
+                        logger.warning("⚠️ Product with cache key %s not found in current product set for ranking.", cache_id_key)
+            else:
+                logger.error(f"❌ Invalid format for cached ranking data (expected dict): {type(cached_ranking)}. Skipping cache application.")
+
+            if found_in_cache_count > 0:
+                logger.info("Applied cached ranking data to %d products.", found_in_cache_count)
+            else:
+                logger.warning("⚠️ Ranking cache hit, but failed to apply data to any products.")
+                # Consider invalidating cache or proceeding as cache miss if application failed completely
+                # For now, we proceed assuming the sort below handles None scores
+
+            # Sort by relevance score (handle potential None scores)
+            ranked_products.sort(key=lambda p: p.relevance_score if p.relevance_score is not None else -1.0, reverse=True)
             return ranked_products
+        else:
+            logger.info("❌ Cache miss for ranking query: '%s' (Key: %s)", query, rank_cache_key)
 
         # Create an efficient prompt for ranking
         prompt = self._create_efficient_ranking_prompt(query, products)
+        # Log prompt length for debugging token usage (optional)
+        logger.debug(f"Ranking prompt length: {len(prompt)} characters")
 
         try:
-            # Get ranking from LLM
-            response = self.openai_service.generate_response(prompt)
+            # Get ranking from LLM using configured model
+            logger.info("⏳ Requesting ranking from AI model: %s", OPENAI_CHAT_MODEL)
+            start_rank_time = time.time()
+            # TODO: Add logic to get token usage from response if client/service supports it
+            response = self.openai_service.generate_response(prompt, model=OPENAI_CHAT_MODEL, max_tokens=3000)
+            rank_duration = time.time() - start_rank_time
+            # TODO: Log token usage here
+            logger.info("⏱️ AI ranking completed in %.2f seconds", rank_duration)
 
             # Parse the response
             ranked_products = self._parse_ranking_response(response, products)
 
-            # Cache the ranking results (3 hours TTL)
-            ranking_data = {
-                p.id: {"score": p.relevance_score, "explanation": p.relevance_explanation} for p in ranked_products if p.relevance_score is not None
-            }
+            # Cache the ranking results using configured TTL
+            # Use the stable cache key for each product in the cached data
+            ranking_data_to_cache = {}
+            for p in ranked_products:
+                if p.relevance_score is not None:
+                    stable_key = self._get_stable_enrichment_cache_key(p)
+                    ranking_data_to_cache[stable_key] = {
+                        "score": p.relevance_score,
+                        "explanation": p.relevance_explanation,
+                        # Include category scores/defs if they exist
+                        "category_scores": getattr(p, "raw_category_scores", {}),
+                        "category_definitions": p.specifications.get("CategoryDefinitions", {}),
+                    }
 
-            await self.redis_cache.set_cache(rank_cache_key, ranking_data, ttl=10800)
+            if ranking_data_to_cache:
+                # --- Add Redis Error Handling ---
+                try:
+                    await self.redis_cache.set_cache(rank_cache_key, ranking_data_to_cache, ttl=CACHE_RANKING_TTL)
+                    logger.info("💾 Cached ranking data (Key: %s, TTL: %ds)", rank_cache_key, CACHE_RANKING_TTL)
+                except redis.RedisError as redis_err:  # Catch specific Redis errors
+                    logger.error(f"⚠️ Redis cache SET error for ranking key '{rank_cache_key}': {redis_err}. Ranking completed but not cached.")
+                except Exception as e:
+                    logger.error(f"❌ Unexpected error during ranking cache SET for key '{rank_cache_key}': {e}")
+                # --- End Redis Error Handling ---
+            else:
+                logger.warning("⚠️ No ranking data with scores generated, nothing to cache.")
 
             return ranked_products
+        except OpenAIServiceError as e:
+            logger.error("❌ AI Service error during ranking: %s. Using fallback.", str(e))
+            return self._create_emergency_fallback(products, "Ranking system error")
         except Exception as e:
-            logger.error("❌ Error ranking products: %s", str(e))
+            logger.error("❌ Unexpected error ranking products: %s. Using fallback.", str(e))
             # Use the shared emergency fallback method
             return self._create_emergency_fallback(products, "Ranking system unavailable")
 
@@ -259,7 +422,7 @@ class SearchAgent:
 
         Args:
             query: Original search query
-            products: Products to rank
+            products: Products to rank (may have varying levels of detail)
 
         Returns:
             str: Optimized prompt for AI ranking
@@ -289,6 +452,9 @@ Use these categories to perform a comprehensive evaluation of each product, cons
 - Price-value ratio considering the product's specifications and features
 - Brand reputation and customer sentiment where available
 - Any unique features or selling points that differentiate products
+- **IMPORTANT: Some products may have limited details (missing description or specs).
+Base your ranking primarily on available information and relevance to the query. 
+Do not heavily penalize products solely for missing data if they seem relevant otherwise.**
 
 FORMAT: Provide your analysis as JSON with this structure:
 ```json
@@ -324,26 +490,45 @@ PRODUCTS:
             product_details = [
                 f"PRODUCT #{i}:",
                 f"Title: {product.title}",
+                f"Store: {product.store or 'Unknown'}",
                 f"Brand: {product.brand or 'Unknown'}",
                 f"Price: {product.format_price()}",
                 f"Rating: {product.rating or 'No ratings'} ({product.review_count or 0} reviews)",
                 f"Category: {product.category or 'Uncategorized'}",
             ]
 
-            # Add short description if available
+            # --- Send SHORTER description for ranking prompt ---
             if product.description:
-                # Limit description length to save tokens
-                short_desc = product.description[:150] + "..." if len(product.description) > 150 else product.description
-                product_details.append(f"Description: {short_desc}")
+                # Limit description length significantly for ranking prompt
+                desc_limit = 80
+                short_desc = product.description[:desc_limit] + "..." if len(product.description) > desc_limit else product.description
+                product_details.append(f"Description Snippet: {short_desc}")  # Indicate it's a snippet
+            else:
+                product_details.append("Description: Not Available")
 
-            # Add key specifications if available
+            # --- Send FEWER key specifications for ranking prompt ---
             if product.specifications:
-                # Select most important specs (up to 5)
-                important_specs = list(product.specifications.items())[:5]
-                specs_text = "; ".join(f"{k}: {v}" for k, v in important_specs)
-                if len(important_specs) < len(product.specifications):
-                    specs_text += f"; ... and {len(product.specifications) - len(important_specs)} more specs"
-                product_details.append(f"Specifications: {specs_text}")
+                # Filter out internal/score specs before display
+                display_specs = {
+                    k: v
+                    for k, v in product.specifications.items()
+                    if not k.startswith(("Score:", "NormalizedScore:", "RawCategoryScores", "CategoryDefinitions"))
+                    and k not in ["productId", "serpId", "itemId", "sku", "mpn", "gtin", "condition"]
+                }
+
+                if display_specs:
+                    # Select FEWER important specs (e.g., up to 3-4) for ranking prompt
+                    spec_limit = 4
+                    important_specs = list(display_specs.items())[:spec_limit]
+                    specs_text = "; ".join(f"{k}: {v}" for k, v in important_specs)
+                    # Indicate if more specs exist but aren't shown in prompt
+                    if len(important_specs) < len(display_specs):
+                        specs_text += f"; ... ({len(display_specs) - len(important_specs)} more specs not shown)"
+                    product_details.append(f"Key Specifications: {specs_text}")  # Indicate they are key specs
+                else:
+                    product_details.append("Specifications: None Available")
+            else:
+                product_details.append("Specifications: Not Available")
 
             # Add shipping info if available
             if product.shipping:
@@ -359,7 +544,7 @@ IMPORTANT GUIDELINES:
 - DO NOT use predefined categories - generate them based on the specific product set and search context
 - Score products from 0-10 in each category (10 is perfect)
 - Calculate an overall score for each product from 0.0-1.0 based on category scores
-- Provide detailed explanations that reference specific product attributes and features
+- Provide detailed explanations that reference specific product attributes and features **available**
 - The search query intent should be the primary consideration for relevance scoring
 - Return ONLY valid JSON following the exact format specified
 """
@@ -402,69 +587,119 @@ IMPORTANT GUIDELINES:
             JSONDecodeError: If response can't be parsed as JSON
             KeyError: If expected keys are missing from response
         """
-        ranked_products = products.copy()
+        ranked_products = products.copy()  # Work on a copy
 
-        # Extract JSON from response
-        json_match = re.search(r"```json\s*(.*?)\s*```", response, re.DOTALL)
-        if json_match:
-            response = json_match.group(1)
-        else:
-            # Try to extract just the JSON object
-            json_match = re.search(r"(\{.*\})", response, re.DOTALL)
+        # Extract JSON from response more robustly
+        try:
+            json_match = re.search(r"```json\s*(.*?)\s*```", response, re.DOTALL)
             if json_match:
-                response = json_match.group(1)
+                json_str = json_match.group(1)
             else:
-                # If we can't extract JSON, raise an error that will be caught by the caller
-                logger.error("❌ Failed to extract JSON from response")
-                raise json.JSONDecodeError("Unable to extract JSON from response", response, 0)
+                # Try finding the first '{' and last '}'
+                start = response.find("{")
+                end = response.rfind("}")
+                if start != -1 and end != -1:
+                    json_str = response[start : end + 1]
+                else:
+                    logger.error("❌ Could not extract JSON block from ranking response.")
+                    raise json.JSONDecodeError("No JSON object found", response, 0)
 
-        data = json.loads(response)
+            data = json.loads(json_str)
+            if not isinstance(data, dict):
+                logger.error("❌ Parsed ranking JSON is not a dictionary.")
+                raise ValueError("Parsed JSON is not a dictionary")
 
-        # Extract evaluation categories (new feature)
+        except json.JSONDecodeError as e:
+            logger.error("❌ Failed to decode JSON from ranking response: %s\nResponse: %s", str(e), response[:500])
+            raise  # Re-raise to be caught by caller, triggering fallback
+
+        # Extract evaluation categories
         categories = data.get("evaluation_categories", [])
-        category_names = [cat.get("name") for cat in categories]
-        logger.info("🔍 Using AI-generated evaluation categories: %s", ", ".join(category_names))
-
-        # Store the category definitions for potential display in UI
-        category_definitions = {cat.get("name"): cat.get("description") for cat in categories}
+        if isinstance(categories, list):
+            # Filter out None names before joining
+            category_names = [name for cat in categories if isinstance(cat, dict) and (name := cat.get("name"))]
+            if category_names:
+                logger.info("📊 AI evaluation categories used: %s", ", ".join(category_names))
+            category_definitions = {cat.get("name"): cat.get("description") for cat in categories if isinstance(cat, dict) and cat.get("name")}
+        else:
+            logger.warning("⚠️ Evaluation categories format unexpected or missing in ranking response.")
+            category_definitions = {}
 
         # Extract rankings
         rankings = data.get("rankings", [])
-        if not rankings:
-            logger.error("❌ No rankings found in response")
-            raise KeyError("No rankings found in response data")
+        if not isinstance(rankings, list) or not rankings:
+            logger.error("❌ No rankings list found or empty in response")
+            # Attempt fallback or raise error
+            # For now, let's try to proceed if possible, but log prominently
+            # raise KeyError("No valid rankings found in response data")
+            pass  # Allow proceeding, maybe some products get default scores
 
-        # Create a map for quick product access
+        # Create a map for quick product access by original index (1-based)
         product_map = {i + 1: p for i, p in enumerate(ranked_products)}
+        ranked_count = 0
 
         # Apply scores and explanations
         for rank_data in rankings:
-            product_idx = rank_data.get("product")
-            if product_idx in product_map:
+            if not isinstance(rank_data, dict):
+                logger.warning("⚠️ Skipping invalid rank data item: %s", str(rank_data))
+                continue
+
+            product_idx = rank_data.get("product")  # Corresponds to PRODUCT #i in prompt
+            # Check if product_idx is a valid integer index
+            if isinstance(product_idx, int) and product_idx in product_map:
                 product = product_map[product_idx]
-                product.relevance_score = rank_data.get("score")
+                try:
+                    score = rank_data.get("score")
+                    product.relevance_score = float(score) if score is not None else None
+                    product.relevance_explanation = str(rank_data.get("explanation", "")).strip()
 
-                # Create enhanced explanation that includes category scores
-                category_scores = rank_data.get("category_scores", {})
-                explanation = rank_data.get("explanation", "")
+                    # Process and store category scores
+                    category_scores_raw = rank_data.get("category_scores", {})
+                    if isinstance(category_scores_raw, dict):
+                        self._apply_category_scores(product, category_scores_raw, category_definitions)
 
-                if category_scores:
-                    # Store category scores in specifications - note that these are now 0-10 scale
-                    for category, score in category_scores.items():
-                        # Store the score and convert to a normalized value
-                        normalized_score = float(score) / 10.0  # Convert 0-10 to 0.0-1.0
-                        product.specifications[f"Score: {category}"] = f"{score}/10"
-                        product.specifications[f"NormalizedScore: {category}"] = f"{normalized_score:.2f}"
+                    ranked_count += 1
+                except (ValueError, TypeError) as e:
+                    logger.warning("⚠️ Error processing rank data for product #%s: %s. Data: %s", product_idx, str(e), rank_data)
+                    product.relevance_score = None  # Ensure score is None if parsing fails
+                    product.relevance_explanation = "Error processing ranking data."
+            else:
+                logger.warning("⚠️ Product index '%s' from ranking not found in product map or invalid.", product_idx)
 
-                    # Also store category definitions for reference
-                    if category_definitions:
-                        product.specifications["CategoryDefinitions"] = category_definitions
+        # Sort by relevance score (descending), putting None scores last
+        ranked_products.sort(key=lambda p: p.relevance_score if p.relevance_score is not None else -1.0, reverse=True)
 
-                product.relevance_explanation = explanation
-
-        # Sort by relevance score (descending)
-        ranked_products.sort(key=lambda p: p.relevance_score or 0.0, reverse=True)
-
-        # Add relevance explanation to top products
-        logger.info("🏆 Successfully ranked %d products", len(ranked_products))
+        logger.info("✅ Successfully parsed ranking for %d products.", ranked_count)
         return ranked_products
+
+    def _apply_category_scores(self, product: Product, category_scores_raw: dict, category_definitions: dict):
+        """Helper to apply category scores and definitions to a product.
+        Stores raw scores in the specifications dictionary.
+        """
+        # product.raw_category_scores = {} # REMOVED: Store in specs instead
+        if product.specifications is None:
+            product.specifications = {}
+        raw_scores_dict = {}  # Temporary dict for raw scores
+
+        for category, score_val in category_scores_raw.items():
+            try:
+                score_num = float(score_val)  # Expecting 0-10 scale from prompt
+                if 0 <= score_num <= 10:
+                    normalized_score = score_num / 10.0
+                    # Store formatted scores in main specs
+                    product.specifications[f"Score: {category}"] = f"{score_num:.1f}/10"
+                    product.specifications[f"NormalizedScore: {category}"] = f"{normalized_score:.2f}"
+                    # Store raw score in the temporary dict
+                    raw_scores_dict[category] = score_num
+                else:
+                    logger.warning("⚠️ Category score '%s' for '%s' out of range (0-10)", score_val, category)
+            except (ValueError, TypeError):
+                logger.warning("⚠️ Could not parse category score '%s' for '%s' as number.", score_val, category)
+
+        # Store the dictionary of raw scores within specifications
+        if raw_scores_dict:
+            product.specifications["RawCategoryScores"] = raw_scores_dict
+
+        # Store category definitions if available
+        if category_definitions:
+            product.specifications["CategoryDefinitions"] = category_definitions

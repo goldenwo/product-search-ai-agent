@@ -8,6 +8,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fi
 
 from src.services.clients.openai_client import OpenAIClient
 from src.utils import OpenAIServiceError, logger
+from src.utils.config import OPENAI_CHAT_MODEL, OPENAI_EMBEDDING_MODEL
 
 
 class OpenAIService:
@@ -32,27 +33,42 @@ class OpenAIService:
         wait=wait_fixed(2),  # Wait 2 seconds between retries
         retry=retry_if_exception_type(openai.OpenAIError),  # Retry only OpenAI errors
     )
-    def generate_response(self, prompt: str, model: str = "gpt-4o-mini") -> str:
+    def generate_response(
+        self,
+        prompt: str,
+        model: str = OPENAI_CHAT_MODEL,  # Use config default
+        max_tokens: int = 1500,
+        use_json_mode: bool = False,  # ADDED: Flag to enable JSON mode
+    ) -> str:
         """
         Generates a response from OpenAI. Retries on failure.
 
         Args:
             prompt: Text prompt to send to the model
             model: OpenAI model to use
+            max_tokens: Maximum tokens for the response
+            use_json_mode: If True, request JSON output from the model # ADDED
 
         Returns:
-            str: Generated text response
+            str: Generated text response (potentially JSON string if use_json_mode=True)
 
         Raises:
             OpenAIServiceError: If the API call fails after retries
         """
         try:
+            # IMPORTANT: For JSON mode, the prompt MUST instruct the model to produce JSON.
+            # The API enforces this. Our extraction prompt already does this.
             messages = [self.client.create_message(role="system", content=prompt)]
+
+            # Set response_format if JSON mode requested
+            response_format_arg = {"type": "json_object"} if use_json_mode else None
+
             response = self.client.create_chat_completion(
                 messages=messages,
                 model=model,
-                temperature=0.7,
-                max_tokens=100,
+                temperature=0.2,
+                max_tokens=max_tokens,
+                response_format=response_format_arg,  # Pass the format arg
             )
             content = response.choices[0].message.content
             if not content:
@@ -67,7 +83,7 @@ class OpenAIService:
             logger.error("❌ Unexpected OpenAI error: %s", str(e))
             raise OpenAIServiceError("Unexpected OpenAI Failure") from e
 
-    def generate_embedding(self, text: Union[str, List[str]], model: str = "text-embedding-3-small") -> np.ndarray:
+    def generate_embedding(self, text: Union[str, List[str]], model: str = OPENAI_EMBEDDING_MODEL) -> np.ndarray:  # Use config default
         """
         Generate embedding vector(s) for text using OpenAI's embedding model.
 

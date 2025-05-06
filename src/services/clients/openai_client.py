@@ -1,6 +1,6 @@
 """Client for interacting with OpenAI APIs."""
 
-from typing import List, Literal, Optional, Union
+from typing import Dict, List, Literal, Optional, Union
 
 import openai
 from openai.types.chat import ChatCompletion
@@ -58,7 +58,13 @@ class OpenAIClient:
             return ChatCompletionUserMessageParam(role="user", content=content)
 
     def create_chat_completion(
-        self, messages: List[ChatCompletionMessageParam], model: str = "gpt-4o-mini", temperature: float = 0.7, max_tokens: int = 100, **kwargs
+        self,
+        messages: List[ChatCompletionMessageParam],
+        model: str = "gpt-4o-mini",
+        temperature: float = 0.7,
+        max_tokens: int = 100,
+        response_format: Optional[Dict[str, str]] = None,
+        **kwargs,
     ) -> ChatCompletion:
         """
         Create a chat completion via OpenAI API.
@@ -68,6 +74,7 @@ class OpenAIClient:
             model: OpenAI model to use
             temperature: Sampling temperature (0.0-2.0)
             max_tokens: Maximum tokens to generate
+            response_format: Optional dictionary to specify response format (e.g., { "type": "json_object" })
             **kwargs: Additional parameters to pass to the API
 
         Returns:
@@ -77,7 +84,18 @@ class OpenAIClient:
             openai.OpenAIError: If the API call fails
         """
         try:
-            response = self.client.chat.completions.create(model=model, messages=messages, temperature=temperature, max_tokens=max_tokens, **kwargs)
+            # Construct arguments, adding response_format only if provided
+            api_args = {
+                "model": model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                **kwargs,
+            }
+            if response_format:
+                api_args["response_format"] = response_format
+
+            response = self.client.chat.completions.create(**api_args)
             return response
         except openai.OpenAIError as e:
             logger.error("❌ OpenAI chat completion API error: %s", str(e))

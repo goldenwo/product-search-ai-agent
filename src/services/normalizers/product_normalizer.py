@@ -48,10 +48,25 @@ class ProductNormalizer:
             # This is the retailer name (e.g., "Sam's Club", "Uniqlo", "H&M")
             store = item.get("source", "").lower()
 
-            # Extract product ID
-            product_id = (
-                item.get("productId", "") or item.get("product_id", "") or item.get("serpapi_product_api_id", "") or f"{store}_{str(position)}"
+            # Extract potential stable product identifiers from SERP item
+            # Use a consistent key naming convention (e.g., lowercase)
+            stable_ids = {
+                "productId": item.get("productId") or item.get("product_id"),
+                "serpId": item.get("serpapi_product_api_id"),  # Example if using SerpApi
+                "itemId": item.get("item_id"),  # Another common key
+                "sku": item.get("sku"),
+                "mpn": item.get("mpn"),
+                "gtin": item.get("gtin"),
+            }
+            # Filter out None/empty values
+            initial_specs_from_serp = {k: v for k, v in stable_ids.items() if v}
+
+            # Generate the primary product ID (used internally if no better ID found)
+            # Use the first available stable ID if possible, otherwise fallback
+            primary_id_source = next(
+                (initial_specs_from_serp[k] for k in ["productId", "serpId", "itemId", "sku", "mpn", "gtin"] if k in initial_specs_from_serp), None
             )
+            product_id = primary_id_source if primary_id_source else f"{store}_{str(position)}"
 
             # Extract image URL
             image_url = item.get("imageUrl", "") or item.get("thumbnail", "")
@@ -69,10 +84,10 @@ class ProductNormalizer:
             # Extract product condition
             condition = ProductNormalizer._detect_condition(item.get("price", ""))
 
-            # Add specifications if available
-            specifications = {}
+            # Initialize specifications with stable IDs from SERP and condition
+            specifications = initial_specs_from_serp
             if condition:
-                specifications["condition"] = condition
+                specifications["condition"] = condition  # Add condition if detected
 
             # Create Product object with additional fields
             product = Product(
