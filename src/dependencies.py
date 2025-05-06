@@ -1,7 +1,6 @@
 """Shared application dependencies."""
 
 # Caching and Rate Limiting
-# ADDED: Import Depends
 from fastapi import Depends, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -14,8 +13,6 @@ from src.services.openai_service import OpenAIService
 from src.services.product_enricher import ProductEnricher
 from src.services.redis_service import RedisService
 from src.services.serp_service import SerpService
-
-# ADDED: Import logger for key_func warning
 from src.utils import logger
 from src.utils.config import OPENAI_API_KEY, REDIS_DB, REDIS_HOST, REDIS_PORT  # Added OpenAI Key
 

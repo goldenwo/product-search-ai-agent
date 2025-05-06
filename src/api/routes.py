@@ -2,6 +2,7 @@
 
 import re
 
+import redis
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from slowapi.errors import RateLimitExceeded
@@ -80,9 +81,11 @@ async def search(
         cached_results = None
         try:
             cached_results = await redis_cache.get_cache(cache_key)
-        except Exception as redis_err:
+        except redis.RedisError as redis_err:
             # Log Redis error but proceed without cache
             logger.error("⚠️ Redis cache GET error for key '%s' (User: %s): %s. Proceeding without cache.", cache_key, email, redis_err)
+        except Exception as e:
+            logger.error("❌ Unexpected error during cache GET for key '%s' (User: %s): %s. Proceeding without cache.", cache_key, email, e)
 
         if cached_results:
             logger.info("Cache hit for search query: '%s'. User: %s", query, email)
@@ -104,9 +107,11 @@ async def search(
             # Use the specific TTL defined in config
             await redis_cache.set_cache(cache_key, search_results, ttl=CACHE_SEARCH_RESULTS_TTL)
             logger.info("Cached search results for key: '%s' (TTL: %ds). User: %s", cache_key, CACHE_SEARCH_RESULTS_TTL, email)
-        except Exception as redis_err:
+        except redis.RedisError as redis_err:
             # Log Redis error but return results anyway
             logger.error("⚠️ Redis cache SET error for key '%s' (User: %s): %s. Results returned but not cached.", cache_key, email, redis_err)
+        except Exception as e:
+            logger.error("❌ Unexpected error during cache SET for key '%s' (User: %s): %s. Results returned but not cached.", cache_key, email, e)
 
         return {"query": query, "cached": False, "results": search_results, "user": email}
 

@@ -6,7 +6,6 @@ from typing import Optional, Tuple
 
 import jwt
 from fastapi import HTTPException, status
-from fastapi.security import HTTPBearer
 from passlib.hash import bcrypt
 
 from src.models.user import Token, UserCreate, UserInDB, UserLogin
@@ -19,8 +18,6 @@ from src.utils.config import (
     JWT_SECRET_KEY,
     REFRESH_TOKEN_EXPIRE_DAYS,
 )
-
-security = HTTPBearer()
 
 
 class AuthService:
