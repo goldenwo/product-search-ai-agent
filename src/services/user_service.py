@@ -48,7 +48,7 @@ class UserService:
             )
             user_row = result.first()
             if user_row:
-                user_row_dict = dict(user_row.items())
+                user_row_dict = user_row._asdict()
                 user_data = {
                     "email": user_row_dict.get("email"),
                     "username": user_row_dict.get("username"),
@@ -88,7 +88,7 @@ class UserService:
                     )
                     user_row = result.first()
                     if user_row:
-                        user_row_dict = dict(user_row.items())
+                        user_row_dict = user_row._asdict()
                         created_user_data = {
                             "email": user_row_dict.get("email"),
                             "username": user_row_dict.get("username"),

@@ -28,37 +28,35 @@ def mocked_user_service(set_test_environment):
     service = UserService()
     mock_session = AsyncMock()
 
-    # Mock the Result object returned by session.execute()
-    # This object itself isn't async, but its methods like .first() are sync.
     mock_result_object = Mock()
-    # Mock the .first() method on the Result object
-    mock_first_method = Mock(return_value=None)  # Default: user not found
-    mock_result_object.first = mock_first_method
-    # Mock other potentially used synchronous methods of Result
+
+    # This is what result.first() will return in the mocked scenario.
+    # It needs to have an _asdict() method.
+    mock_row_object = Mock()
+    mock_result_object.first = Mock(return_value=mock_row_object)  # .first() returns our mock_row_object
+
     mock_result_object.scalar_one_or_none = Mock(return_value=None)
     mock_result_object.one = Mock()
     mock_result_object.all = Mock(return_value=[])
 
-    # session.execute is async and returns the mocked Result object
     mock_session.execute = AsyncMock(return_value=mock_result_object)
     mock_session.commit = AsyncMock()
     mock_session.rollback = AsyncMock()
 
-    # Mock the transaction context manager (__aenter__ returns the session)
     mock_trans = AsyncMock()
     mock_trans.__aenter__ = AsyncMock(return_value=mock_session)
     mock_trans.__aexit__ = AsyncMock(return_value=False)
     mock_session.begin = Mock(return_value=mock_trans)
 
-    # Mock the session maker context manager (__aenter__ returns the session)
     mock_session_ctx = AsyncMock()
     mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
     mock_session_maker = Mock(return_value=mock_session_ctx)
     service.async_session = mock_session_maker
 
-    # Return the service, the session mock, and the mock for the .first() method
-    return service, mock_session, mock_first_method
+    # Return the service, the session mock, and the mock_row_object
+    # Tests will configure mock_row_object._asdict.return_value
+    return service, mock_session, mock_row_object
 
 
 @pytest.fixture
@@ -70,9 +68,14 @@ def mock_user_data():
 @pytest.mark.asyncio
 async def test_get_user_success(mocked_user_service):
     """Test getting a user by email with mocks."""
-    service, mock_session, mock_first_method = mocked_user_service
-    mock_user_row_data = {"email": "test@example.com", "username": "myuser", "hashed_password": "abc123", "is_verified": True}
-    mock_first_method.return_value = mock_user_row_data
+    service, mock_session, mock_row_object = mocked_user_service  # Unpack mock_row_object
+    mock_user_data_dict = {"email": "test@example.com", "username": "myuser", "hashed_password": "abc123", "is_verified": True}
+
+    # Configure the _asdict method on the mock_row_object
+    mock_row_object._asdict = Mock(return_value=mock_user_data_dict)
+    # Also, handle the case where user_row itself might be None (user not found)
+    # This is done by controlling what result.first() returns initially (mock_row_object or None)
+    # For this test, result.first() returns mock_row_object.
 
     user = await service.get_user("test@example.com")
     assert user is not None
@@ -80,26 +83,39 @@ async def test_get_user_success(mocked_user_service):
     assert user.username == "myuser"
     assert user.is_verified is True
     mock_session.execute.assert_called_once()
+    mock_row_object._asdict.assert_called_once()  # Verify _asdict was called
 
 
 @pytest.mark.asyncio
 async def test_get_nonexistent_user(mocked_user_service):
     """Test retrieving non-existent user with mocks."""
-    service, mock_session, mock_first_method = mocked_user_service
-    mock_first_method.return_value = None
+    service, mock_session, mock_row_object_provided_by_fixture = mocked_user_service
+
+    # To simulate user_row being None (user not found), we make result.first() return None.
+    # The mock_result_object is what session.execute returns.
+    # We need to access it via the session mock to change what its .first() method returns for this specific test.
+    mock_session.execute.return_value.first = Mock(return_value=None)
 
     user = await service.get_user("nonexistent@example.com")
     assert user is None
     mock_session.execute.assert_called_once()
+    # mock_row_object_provided_by_fixture._asdict should not have been called
+    assert not hasattr(mock_row_object_provided_by_fixture, "_asdict") or not mock_row_object_provided_by_fixture._asdict.called
 
 
 @pytest.mark.asyncio
 async def test_create_user_success(mocked_user_service, mock_user_data):
     """Test successful user creation with mocks."""
-    service, mock_session, mock_first_method = mocked_user_service
+    service, mock_session, mock_row_object = mocked_user_service
     hashed_password = "hashed_password_here"
-    created_user_data = {"email": mock_user_data.email, "username": mock_user_data.username, "hashed_password": hashed_password, "is_verified": False}
-    mock_first_method.return_value = created_user_data
+    created_user_data_dict = {
+        "email": mock_user_data.email,
+        "username": mock_user_data.username,
+        "hashed_password": hashed_password,
+        "is_verified": False,
+    }
+
+    mock_row_object._asdict = Mock(return_value=created_user_data_dict)
 
     user = await service.create_user(mock_user_data, hashed_password)
     assert isinstance(user, UserInDB)
@@ -108,6 +124,7 @@ async def test_create_user_success(mocked_user_service, mock_user_data):
     assert user.hashed_password == hashed_password
     assert user.is_verified is False
     mock_session.execute.assert_called_once()
+    mock_row_object._asdict.assert_called_once()
     mock_session.begin().__aenter__.assert_called_once()
     mock_session.begin().__aexit__.assert_called_once()
 
@@ -156,13 +173,20 @@ async def test_database_connection_error(mocked_user_service):
 @pytest.mark.asyncio
 async def test_user_model_validation(mocked_user_service, mock_user_data):
     """Test that returned user data validates against UserInDB model with mocks."""
-    service, mock_session, mock_first_method = mocked_user_service
+    service, mock_session, mock_row_object = mocked_user_service
     hashed_password = "hashed_password_here"
-    mock_db_user_data = {"email": mock_user_data.email, "username": mock_user_data.username, "hashed_password": hashed_password, "is_verified": True}
-    mock_first_method.return_value = mock_db_user_data
+    mock_db_user_data_dict = {
+        "email": mock_user_data.email,
+        "username": mock_user_data.username,
+        "hashed_password": hashed_password,
+        "is_verified": True,
+    }
+
+    mock_row_object._asdict = Mock(return_value=mock_db_user_data_dict)
 
     user_obj_from_service = await service.create_user(mock_user_data, hashed_password)
     assert isinstance(user_obj_from_service, UserInDB)
+    mock_row_object._asdict.assert_called_once()
 
 
 @pytest.mark.asyncio
