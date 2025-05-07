@@ -63,6 +63,7 @@ playwright = "*"
 pre-commit = "*"
 pytest = "*"
 aiosqlite = "*"
+pytest-mock = "*"
 
 [requires]
 python_version = "3.10"

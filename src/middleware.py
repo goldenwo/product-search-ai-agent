@@ -17,8 +17,9 @@ PUBLIC_PATHS = {
     "/auth/login",
     "/auth/register",
     "/auth/refresh",
-    "/auth/request-reset",
-    "/auth/reset-password",
+    "/auth/password/reset-request",
+    "/auth/password/reset",
+    "/auth/verify-email",
     "/api/",  # Health check route
 }
 
@@ -36,19 +37,22 @@ class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         request_path = request.url.path
 
-        # 1. Check if route is public (OpenAPI docs, auth endpoints, health check)
-        if request_path in PUBLIC_PATHS or request_path.startswith("/docs") or request_path.startswith("/openapi"):
+        # 1. Check if route is public
+        # Paths starting with /docs or /openapi are always public (for Swagger/OpenAPI UI)
+        if request_path.startswith("/docs") or request_path.startswith("/openapi"):
+            logger.debug("Allowing public access to OpenAPI/docs: %s", request_path)
+            response = await call_next(request)
+            return response
+
+        # Check against explicitly defined public paths
+        if request_path in PUBLIC_PATHS:
             logger.debug("Allowing public access to: %s", request_path)
             response = await call_next(request)
             return response
 
-        # Assume paths starting with /api not in PUBLIC_PATHS require authentication
-        if not request_path.startswith("/api"):
-            # If it's not public and not /api, it might be an unexpected path
-            logger.warning("Request to non-API, non-public path: %s", request_path)
-            # Let it proceed; FastAPI might 404 or another middleware might handle
-            response = await call_next(request)
-            return response
+        # If the path is not public, it requires authentication.
+        # This includes /api/* routes and /auth/* routes not in PUBLIC_PATHS.
+        logger.debug("Protected route, performing authentication for: %s", request_path)
 
         # 2. Extract Token
         auth_header = request.headers.get("Authorization")

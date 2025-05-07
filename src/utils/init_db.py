@@ -2,16 +2,16 @@
 
 import asyncio
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String  # Add Boolean, ForeignKey, DateTime, Integer, func
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String  # Added func
 from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy.orm import declarative_base
 
+from src.models.base import Base  # IMPORT THE SHARED BASE
 from src.utils.config import DATABASE_URL
 
-Base = declarative_base()
+# REMOVED: Base = declarative_base() # DO NOT REDEFINE BASE HERE
 
 
-class User(Base):
+class User(Base):  # Uses the imported Base
     """Database model for user table."""
 
     __tablename__ = "users"
@@ -21,7 +21,7 @@ class User(Base):
     is_verified = Column(Boolean, default=False, nullable=False)  # Added is_verified
 
 
-class EmailVerificationToken(Base):
+class EmailVerificationToken(Base):  # Uses the imported Base
     """Database model for email_verification_tokens table."""
 
     __tablename__ = "email_verification_tokens"
