@@ -18,7 +18,7 @@ security = HTTPBearer()
 
 @router.post("/register")
 @limiter.limit("10/hour;5/minute")
-async def register(user: UserCreate, auth_service: AuthService = Depends(get_auth_service)):
+async def register(request: Request, user: UserCreate, auth_service: AuthService = Depends(get_auth_service)):
     """
     Register a new user with validation.
 
@@ -48,7 +48,7 @@ async def register(user: UserCreate, auth_service: AuthService = Depends(get_aut
 
 @router.post("/login")
 @limiter.limit("20/hour;10/minute")
-async def login(user: UserLogin, auth_service: AuthService = Depends(get_auth_service)):
+async def login(request: Request, user: UserLogin, auth_service: AuthService = Depends(get_auth_service)):
     """
     Login with brute force protection.
 
@@ -66,7 +66,7 @@ async def login(user: UserLogin, auth_service: AuthService = Depends(get_auth_se
 
 @router.post("/refresh")
 @limiter.limit("50/hour;20/minute")
-async def refresh_token_handler(token: str, auth_service: AuthService = Depends(get_auth_service)):
+async def refresh_token_handler(request: Request, token: str, auth_service: AuthService = Depends(get_auth_service)):
     """
     Refresh access token using refresh token.
 
@@ -87,7 +87,7 @@ async def refresh_token_handler(token: str, auth_service: AuthService = Depends(
 
 @router.post("/password/reset-request")
 @limiter.limit("5/hour")
-async def request_password_reset(email: str, auth_service: AuthService = Depends(get_auth_service)):
+async def request_password_reset(request: Request, email: str, auth_service: AuthService = Depends(get_auth_service)):
     """Request password reset token."""
     await auth_service.initiate_password_reset(email)
     return {"message": "If email exists, reset instructions have been sent"}
