@@ -8,7 +8,7 @@ from passlib.hash import bcrypt
 from pydantic import ValidationError
 import pytest
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from src.models.user import UserCreate, UserInDB
 from src.services.user_service import UserService
@@ -222,66 +222,53 @@ async def test_update_password_db_error(mocked_user_service):
 
 
 @pytest.mark.asyncio
-async def test_integration_create_and_get_user(db_session_for_test: AsyncSession):
+async def test_integration_create_and_get_user(db_engine_with_schema: AsyncEngine, db_session_for_test: AsyncSession):
     """Test creating a new user and retrieving it using the test database."""
-    user_service = UserService()  # Instantiates with TEST_DATABASE_URL from conftest
+    # Pass the test engine
+    user_service = UserService(engine=db_engine_with_schema)
 
     user_data = UserCreate(email="integ_test@example.com", username="integ_user", password="Password12345")
-    # Use the helper for hashing in integration tests if AuthService is not used
     hashed_password = get_test_password_hash(user_data.password)
-
-    # Ensure the user doesn't exist before creation (for idempotency if test is re-run on same DB instance without full teardown)
     existing_user = await user_service.get_user(user_data.email)
     if existing_user:
-        # This state should ideally not be reached if db_engine_with_schema drops tables per session.
-        # However, for safety or if running against a persistent test DB:
-        # You might want to delete it or raise an error indicating a dirty test state.
-        # For now, let's assume clean state from db_engine_with_schema.
         pass
-
     created_user = await user_service.create_user(user_data, hashed_password)
     assert created_user is not None
     assert created_user.email == user_data.email
     assert created_user.username == user_data.username
-    assert created_user.hashed_password == hashed_password  # Or verify with verify_password
+    assert created_user.hashed_password == hashed_password
     assert created_user.is_verified is False
-
     retrieved_user = await user_service.get_user(user_data.email)
     assert retrieved_user is not None
     assert retrieved_user.email == user_data.email
     assert retrieved_user.username == user_data.username
-    # Use the helper for verification
     assert verify_test_password(user_data.password, retrieved_user.hashed_password)
     assert retrieved_user.is_verified is False
 
 
 @pytest.mark.asyncio
-async def test_integration_get_non_existent_user(db_session_for_test: AsyncSession):
+async def test_integration_get_non_existent_user(db_engine_with_schema: AsyncEngine, db_session_for_test: AsyncSession):
     """Test retrieving a non-existent user from the test database."""
-    user_service = UserService()
+    # Pass the test engine
+    user_service = UserService(engine=db_engine_with_schema)
     user = await user_service.get_user("no_such_user@example.com")
     assert user is None
 
 
 @pytest.mark.asyncio
-async def test_integration_update_password(db_session_for_test: AsyncSession):
+async def test_integration_update_password(db_engine_with_schema: AsyncEngine, db_session_for_test: AsyncSession):
     """Test updating a user's password in the test database."""
-    user_service = UserService()
+    # Pass the test engine
+    user_service = UserService(engine=db_engine_with_schema)
     email = "update_pass@example.com"
     username = "update_pass_user"
     old_password_plain = "OldPassword123"
     new_password_plain = "NewPassword456"
-
-    # Create user first
     user_to_create = UserCreate(email=email, username=username, password=old_password_plain)
     old_hashed_password = get_test_password_hash(old_password_plain)
     await user_service.create_user(user_to_create, old_hashed_password)
-
-    # Update password
     new_hashed_password = get_test_password_hash(new_password_plain)
     await user_service.update_password(email, new_hashed_password)
-
-    # Verify
     updated_user = await user_service.get_user(email)
     assert updated_user is not None
     assert verify_test_password(new_password_plain, updated_user.hashed_password)
@@ -289,66 +276,50 @@ async def test_integration_update_password(db_session_for_test: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_integration_mark_user_as_verified(db_session_for_test: AsyncSession):
+async def test_integration_mark_user_as_verified(db_engine_with_schema: AsyncEngine, db_session_for_test: AsyncSession):
     """Test marking a user as verified in the test database."""
-    user_service = UserService()
+    # Pass the test engine
+    user_service = UserService(engine=db_engine_with_schema)
     email = "verify_user@example.com"
-
-    # Create unverified user
     user_to_create = UserCreate(email=email, username="verify_me", password="Password123")
     hashed_password = get_test_password_hash(user_to_create.password)
     await user_service.create_user(user_to_create, hashed_password)
-
     user_before_verification = await user_service.get_user(email)
     assert user_before_verification is not None
     assert user_before_verification.is_verified is False
-
-    # Mark as verified
     marked_success = await user_service.mark_user_as_verified(email)
     assert marked_success is True
-
     user_after_verification = await user_service.get_user(email)
     assert user_after_verification is not None
     assert user_after_verification.is_verified is True
 
 
 @pytest.mark.asyncio
-async def test_integration_verification_token_workflow(db_session_for_test: AsyncSession):
+async def test_integration_verification_token_workflow(db_engine_with_schema: AsyncEngine, db_session_for_test: AsyncSession):
     """Test the full email verification token lifecycle with the test database."""
-    from datetime import datetime, timedelta, timezone  # For token expiry
+    from datetime import datetime, timedelta, timezone
 
-    user_service = UserService()
+    # Pass the test engine
+    user_service = UserService(engine=db_engine_with_schema)
     email = "token_user@example.com"
     token_str = "test_verification_token_123"
-
-    # 1. Create user (will be unverified)
     user_to_create = UserCreate(email=email, username="token_username", password="TokenPass123")
     hashed_password = get_test_password_hash(user_to_create.password)
     await user_service.create_user(user_to_create, hashed_password)
-
-    # 2. Store verification token
     expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
     await user_service.store_email_verification_token(email, token_str, expires_at)
-
-    # 3. Retrieve email by token
     retrieved_email = await user_service.get_user_email_by_verification_token(token_str)
     assert retrieved_email == email
-
-    # 4. Mark user as verified (simulating what AuthService would do after this check)
     await user_service.mark_user_as_verified(email)
     verified_user = await user_service.get_user(email)
     assert verified_user is not None
     assert verified_user.is_verified is True
-
-    # 5. Delete token
     await user_service.delete_verification_token(token_str)
     email_after_delete = await user_service.get_user_email_by_verification_token(token_str)
     assert email_after_delete is None
-
-    # Test expired token
     expired_token_str = "expired_token_456"
     expired_at = datetime.now(timezone.utc) - timedelta(hours=1)
     await user_service.store_email_verification_token(email, expired_token_str, expired_at)
     email_for_expired = await user_service.get_user_email_by_verification_token(expired_token_str)
     assert email_for_expired is None
-    await user_service.delete_verification_token(expired_token_str)  # Cleanup
+    await user_service.delete_verification_token(expired_token_str)

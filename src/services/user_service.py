@@ -6,7 +6,7 @@ from typing import Optional
 
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from src.models.user import UserCreate, UserInDB
 from src.utils import logger
@@ -16,21 +16,22 @@ from src.utils.config import DATABASE_URL as DEFAULT_CONFIG_DATABASE_URL
 class UserService:
     """Service for managing user data in the database."""
 
-    def __init__(self):
-        """Initialize database connection."""
-        db_url = os.getenv("DATABASE_URL")
-        if not db_url:
-            db_url = DEFAULT_CONFIG_DATABASE_URL
+    def __init__(self, engine: Optional[AsyncEngine] = None):
+        """Initialize database connection, using provided engine or creating a new one."""
+        if engine:
+            self.engine = engine
+        else:
+            db_url = os.getenv("DATABASE_URL")
+            if not db_url:
+                db_url = DEFAULT_CONFIG_DATABASE_URL
+            if not db_url:
+                raise ValueError("DATABASE_URL is not set in environment or config.")
+            if "YOUR_DATABASE_CONNECTION_STRING_HERE" in db_url or not (
+                db_url.startswith("sqlite") or db_url.startswith("postgresql") or db_url.startswith("mysql")
+            ):
+                raise ValueError(f"Invalid or placeholder DATABASE_URL configured: {db_url}")
+            self.engine = create_async_engine(str(db_url))
 
-        if not db_url:
-            raise ValueError("DATABASE_URL is not set in environment or config.")
-
-        if "YOUR_DATABASE_CONNECTION_STRING_HERE" in db_url or not (
-            db_url.startswith("sqlite") or db_url.startswith("postgresql") or db_url.startswith("mysql")
-        ):
-            raise ValueError(f"Invalid or placeholder DATABASE_URL configured: {db_url}")
-
-        self.engine = create_async_engine(str(db_url))
         self.async_session = async_sessionmaker(self.engine, class_=AsyncSession, expire_on_commit=False)
 
     async def get_user(self, email: str) -> Optional[UserInDB]:
