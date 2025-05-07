@@ -69,3 +69,6 @@ SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
 EMAIL_SENDER = os.getenv("EMAIL_SENDER", "noreply@yourdomain.com")  # Default sender address
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")  # Base URL for frontend links (e.g., password reset)
 IS_DEVELOPMENT = os.getenv("ENVIRONMENT", "development") == "development"  # Flag for development-specific behavior
+
+# Token Expiry Settings
+VERIFICATION_TOKEN_EXPIRE_HOURS = int(os.getenv("VERIFICATION_TOKEN_EXPIRE_HOURS", "24"))  # For email verification

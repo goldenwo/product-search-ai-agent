@@ -1,8 +1,8 @@
 """Custom FastAPI Middleware Definitions."""
 
-import jwt
 from fastapi import HTTPException, Request, status
 from fastapi.responses import JSONResponse
+import jwt
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response
 
@@ -75,6 +75,22 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
             email: str | None = payload.get("sub")
             token_type: str | None = payload.get("type")
+            access_jti: str | None = payload.get("jti")
+
+            # Check if JTI is denylisted - this requires AuthService instance
+            # This is where proper DI for middleware is needed.
+            # For this example, we assume auth_service can be resolved.
+            # This part of the code will need refinement based on how AuthService is made available here.
+            # For demonstration, let's assume a (simplified, non-DI) way to get it:
+            temp_auth_service = request.app.state.auth_service  # Assuming auth_service is attached to app.state
+
+            if await temp_auth_service.is_jti_denylisted(access_jti):
+                logger.warning("Denylisted access token presented for user: %s, JTI: %s", email, access_jti)
+                return JSONResponse(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    content={"detail": "Token has been revoked"},
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
 
             # Ensure it's a valid 'access' token with an email subject
             if not email or token_type != "access":

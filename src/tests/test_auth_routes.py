@@ -2,9 +2,9 @@
 
 from unittest.mock import AsyncMock, patch
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+import pytest
 
 from src.api.auth import router
 from src.models.user import Token

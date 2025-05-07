@@ -2,8 +2,8 @@
 
 from unittest.mock import AsyncMock, Mock
 
-import pytest
 from pydantic import ValidationError
+import pytest
 from sqlalchemy.exc import SQLAlchemyError
 
 from src.models.user import UserCreate, UserInDB

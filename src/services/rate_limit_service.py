@@ -4,15 +4,15 @@ from fastapi import HTTPException, status
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
-from src.utils import REDIS_DB, REDIS_HOST, REDIS_PORT, logger
+from src.utils import logger
 
 
 class RateLimitService:
     """Handles rate limiting using Redis."""
 
-    def __init__(self):
-        """Initialize Redis connection."""
-        self.redis = Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, decode_responses=True)
+    def __init__(self, redis_client: Redis):
+        """Initialize with a Redis client instance."""
+        self.redis = redis_client
         self.max_attempts = 5  # Lock after 5 failed attempts
         self.reset_after = 1800  # 30 minutes lock duration
 

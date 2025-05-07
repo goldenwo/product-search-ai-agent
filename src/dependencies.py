@@ -9,10 +9,12 @@ from src.ai_agent.search_agent import SearchAgent
 
 # Core Services
 from src.services.auth_service import AuthService
+from src.services.email_service import EmailService
 from src.services.openai_service import OpenAIService
 from src.services.product_enricher import ProductEnricher
 from src.services.redis_service import RedisService
 from src.services.serp_service import SerpService
+from src.services.user_service import UserService
 from src.utils import logger
 from src.utils.config import OPENAI_API_KEY, REDIS_DB, REDIS_HOST, REDIS_PORT  # Added OpenAI Key
 
@@ -60,6 +62,21 @@ def get_serp_service() -> SerpService:
     return _cache["serp"]
 
 
+def get_user_service() -> UserService:
+    """Dependency function to get a UserService instance."""
+    if "user_service" not in _cache:
+        _cache["user_service"] = UserService()
+    return _cache["user_service"]
+
+
+def get_email_service() -> EmailService:
+    """Dependency function to get an EmailService instance."""
+    if "email_service" not in _cache:
+        # EmailService loads SENDGRID_API_KEY from config internally
+        _cache["email_service"] = EmailService()
+    return _cache["email_service"]
+
+
 def get_search_agent(
     redis_cache: RedisService = Depends(get_redis_service),
     # Inject other dependencies SearchAgent needs directly
@@ -77,13 +94,14 @@ def get_search_agent(
     return SearchAgent(redis_cache=redis_cache, openai_service=openai_service, serp_service=serp_service, product_enricher=product_enricher)
 
 
-def get_auth_service() -> AuthService:
+def get_auth_service(
+    redis_service: RedisService = Depends(get_redis_service),
+    user_service: UserService = Depends(get_user_service),
+    email_service: EmailService = Depends(get_email_service),
+) -> AuthService:
     """Dependency function to get an AuthService instance."""
-    # AuthService might depend on UserService, EmailService, RateLimitService
-    # These dependencies would also need to be managed here or injected.
-    # For simplicity now, assume AuthService handles its own internal setup.
     if "auth" not in _cache:
-        _cache["auth"] = AuthService()
+        _cache["auth"] = AuthService(redis_service=redis_service, user_service=user_service, email_service=email_service)
     return _cache["auth"]
 
 

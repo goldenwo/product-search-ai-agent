@@ -2,8 +2,8 @@
 
 from unittest.mock import AsyncMock
 
-import pytest
 from fastapi import HTTPException
+import pytest
 from redis.exceptions import RedisError
 
 from src.services.rate_limit_service import RateLimitService

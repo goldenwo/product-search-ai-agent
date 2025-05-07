@@ -1,7 +1,7 @@
 """Normalizers for transforming raw API data into structured product models."""
 
-import re
 from decimal import Decimal, InvalidOperation
+import re
 from typing import Any, Dict, Optional
 
 from src.models.product import Product

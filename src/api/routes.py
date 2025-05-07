@@ -2,9 +2,9 @@
 
 import re
 
-import redis
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+import redis
 from slowapi.errors import RateLimitExceeded
 
 from src.ai_agent.search_agent import SearchAgent

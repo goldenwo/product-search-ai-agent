@@ -1,5 +1,6 @@
 """User service for managing user data in the database."""
 
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import text
@@ -32,13 +33,23 @@ class UserService:
             UserInDB if found, None otherwise
         """
         async with self.async_session() as session:
-            result = await session.execute(text("SELECT * FROM users WHERE email = :email"), {"email": email})
-            user = result.first()
-            return UserInDB.model_validate(user) if user else None
+            result = await session.execute(
+                text("SELECT email, username, hashed_password, is_verified FROM users WHERE email = :email"), {"email": email}
+            )
+            user_row = result.first()
+            if user_row:
+                user_data = {
+                    "email": user_row.email,
+                    "username": user_row.username,
+                    "hashed_password": user_row.hashed_password,
+                    "is_verified": user_row.is_verified if hasattr(user_row, "is_verified") else False,
+                }
+                return UserInDB.model_validate(user_data)
+            return None
 
     async def create_user(self, user_data: UserCreate, hashed_password: str) -> UserInDB:
         """
-        Create a new user in the database.
+        Create a new user in the database. is_verified defaults to FALSE.
 
         Args:
             user_data: User creation data
@@ -55,18 +66,25 @@ class UserService:
                 try:
                     result = await session.execute(
                         text("""
-                        INSERT INTO users (email, username, hashed_password)
-                        VALUES (:email, :username, :hashed_password)
-                        RETURNING *
+                        INSERT INTO users (email, username, hashed_password, is_verified)
+                        VALUES (:email, :username, :hashed_password, FALSE)
+                        RETURNING email, username, hashed_password, is_verified
                         """),
                         {"email": user_data.email, "username": user_data.username, "hashed_password": hashed_password},
                     )
-                    user = result.first()
-                    await session.commit()
-                    return UserInDB.model_validate(user)
+                    user_row = result.first()
+                    if user_row:
+                        created_user_data = {
+                            "email": user_row.email,
+                            "username": user_row.username,
+                            "hashed_password": user_row.hashed_password,
+                            "is_verified": user_row.is_verified,
+                        }
+                        return UserInDB.model_validate(created_user_data)
+                    logger.error("User creation with RETURNING did not yield a row.")
+                    raise SQLAlchemyError("User creation failed to return user data.")
                 except SQLAlchemyError as e:
-                    await session.rollback()
-                    logger.error("❌ Database error: %s", str(e))
+                    logger.error("❌ Database error during user creation: %s", str(e))
                     raise
 
     async def update_password(self, email: str, hashed_password: str) -> None:
@@ -78,7 +96,70 @@ class UserService:
                         text("UPDATE users SET hashed_password = :hashed_password WHERE email = :email"),
                         {"email": email, "hashed_password": hashed_password},
                     )
+                    logger.info("Password updated in DB for %s", email)
                 except SQLAlchemyError as e:
-                    await session.rollback()
                     logger.error("❌ Database error updating password: %s", str(e))
                     raise
+
+    async def store_email_verification_token(self, user_email: str, token: str, expires_at: datetime) -> None:
+        """Stores an email verification token in the database."""
+        async with self.async_session() as session:
+            async with session.begin():
+                try:
+                    await session.execute(
+                        text("""
+                        INSERT INTO email_verification_tokens (user_email, token, expires_at)
+                        VALUES (:user_email, :token, :expires_at)
+                        """),
+                        {"user_email": user_email, "token": token, "expires_at": expires_at},
+                    )
+                    logger.info("Stored verification token for %s", user_email)
+                except SQLAlchemyError as e:
+                    logger.error("❌ Database error storing verification token: %s", str(e))
+                    raise
+
+    async def get_user_email_by_verification_token(self, token: str) -> Optional[str]:
+        """Retrieves a user's email by a valid (non-expired) verification token."""
+        async with self.async_session() as session:
+            try:
+                current_time = datetime.now(timezone.utc)
+                result = await session.execute(
+                    text(""" 
+                    SELECT user_email FROM email_verification_tokens
+                    WHERE token = :token AND expires_at > :current_time
+                    """),
+                    {"token": token, "current_time": current_time},
+                )
+                record = result.first()
+                return record.user_email if record else None
+            except SQLAlchemyError as e:
+                logger.error("❌ Database error fetching verification token: %s", str(e))
+                return None
+
+    async def mark_user_as_verified(self, email: str) -> bool:
+        """Marks a user as verified in the database."""
+        async with self.async_session() as session:
+            async with session.begin():
+                try:
+                    result = await session.execute(text("UPDATE users SET is_verified = TRUE WHERE email = :email RETURNING email"), {"email": email})
+                    updated_user = result.first()
+                    if updated_user:
+                        logger.info("User %s marked as verified in DB.", email)
+                        return True
+                    else:
+                        logger.warning("Attempted to mark non-existent user %s as verified.", email)
+                        return False
+                except SQLAlchemyError as e:
+                    logger.error("❌ Database error marking user %s as verified: %s", email, str(e))
+                    raise
+
+    async def delete_verification_token(self, token: str) -> None:
+        """Deletes an email verification token from the database."""
+        async with self.async_session() as session:
+            async with session.begin():
+                try:
+                    await session.execute(text("DELETE FROM email_verification_tokens WHERE token = :token"), {"token": token})
+                    logger.info("Deleted verification token: %s", token)
+                except SQLAlchemyError as e:
+                    logger.error("❌ Database error deleting verification token: %s", str(e))
+                    pass

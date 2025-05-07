@@ -3,9 +3,9 @@
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, Mock
 
+from fastapi import HTTPException
 import jwt
 import pytest
-from fastapi import HTTPException
 
 from src.models.user import UserCreate, UserInDB, UserLogin
 from src.services.auth_service import AuthService

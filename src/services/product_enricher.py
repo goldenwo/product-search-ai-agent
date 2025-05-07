@@ -6,8 +6,8 @@ import re
 from typing import Any, Dict, Optional
 
 import aiohttp
-import extruct
 from bs4 import BeautifulSoup, Tag
+import extruct
 from playwright.async_api import async_playwright
 from w3lib.html import get_base_url
 
