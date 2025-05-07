@@ -131,9 +131,24 @@ def mock_limiter_storage_for_tests(session_monkeypatch):
 async def db_engine_with_schema(set_test_environment):
     """
     Creates a test database engine and initializes the schema once per session.
+    Ensures the test database file is removed before starting if it exists.
     Depends on set_test_environment to ensure DATABASE_URL is correctly set.
     """
-    # Ensure set_test_environment has run
+    # Ensure set_test_environment has run (autouse=True, so it should have)
+
+    db_file_path = None
+    if TEST_DATABASE_URL.startswith("sqlite+") and "memory" not in TEST_DATABASE_URL:
+        db_file_path = TEST_DATABASE_URL.split("///")[-1]
+        if os.path.exists(db_file_path):
+            try:
+                logger.info(f"Removing existing test database file: {db_file_path}")
+                os.remove(db_file_path)
+            except OSError as e:
+                logger.error(f"Error removing existing test database file {db_file_path}: {e}. Tests may fail.")
+                # Depending on severity, you might want to raise an error here to stop tests
+                # For now, we'll log and continue, but this could mask issues.
+                # raise TestSetupError(f"Could not remove existing test database: {e}") from e
+
     engine = create_async_engine(TEST_DATABASE_URL)  # Use the test URL
     async with engine.begin() as conn:
         # Ensure all tables defined by Base.metadata are created.
@@ -144,20 +159,19 @@ async def db_engine_with_schema(set_test_environment):
     yield engine  # Provide the engine to other fixtures/tests
 
     # Teardown: Drop all tables after the test session.
+    # This is important for cleanup but the pre-removal handles the "already exists" issue.
     logger.info(f"Dropping database schema at {TEST_DATABASE_URL}")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
     await engine.dispose()
 
-    # Remove the SQLite file after tests if it's not an in-memory DB
-    if TEST_DATABASE_URL.startswith("sqlite+") and "memory" not in TEST_DATABASE_URL:
-        db_file_path = TEST_DATABASE_URL.split("///")[-1]
-        if os.path.exists(db_file_path):
-            try:
-                os.remove(db_file_path)
-                logger.info(f"Test database file {db_file_path} removed.")
-            except OSError as e:
-                logger.warning(f"Warning: Could not remove test database file {db_file_path}: {e}")
+    # Remove the SQLite file after tests if it's not an in-memory DB and was created
+    if db_file_path and os.path.exists(db_file_path):
+        try:
+            os.remove(db_file_path)
+            logger.info(f"Test database file {db_file_path} removed after session.")
+        except OSError as e:
+            logger.warning(f"Warning: Could not remove test database file {db_file_path} post-session: {e}")
 
 
 @pytest.fixture(scope="function")
