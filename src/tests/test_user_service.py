@@ -233,3 +233,94 @@ async def test_update_password_db_error(user_service):  # pylint: disable=redefi
     with pytest.raises(SQLAlchemyError):
         await service.update_password("test@example.com", "new_hashed_password")
     mock_session.rollback.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_create_and_get_user(user_service: UserService, db_session_for_test):
+    """Test creating a new user and retrieving it."""
+    user_data = UserCreate(email="test@example.com", username="testuser", password="Password123")
+    hashed_password = "hashed_test_password"  # In real tests, you might hash it or mock hashing
+
+    created_user = await user_service.create_user(user_data, hashed_password)
+    assert created_user is not None
+    assert created_user.email == user_data.email
+    assert created_user.username == user_data.username
+    assert created_user.hashed_password == hashed_password
+    assert created_user.is_verified is False  # Default from schema/model
+
+    retrieved_user = await user_service.get_user(user_data.email)
+    assert retrieved_user is not None
+    assert retrieved_user.email == created_user.email
+    assert retrieved_user.username == created_user.username
+    assert retrieved_user.is_verified == created_user.is_verified
+
+
+@pytest.mark.asyncio
+async def test_get_non_existent_user(user_service: UserService, db_session_for_test):
+    """Test retrieving a non-existent user."""
+    user = await user_service.get_user("nonexistent@example.com")
+    assert user is None
+
+
+@pytest.mark.asyncio
+async def test_update_password(user_service: UserService, db_session_for_test):
+    """Test updating a user's password."""
+    # First, create a user to update
+    user_data = UserCreate(email="update@example.com", username="updateuser", password="OldPassword1")
+    initial_hashed_password = "initial_hashed_password"
+    await user_service.create_user(user_data, initial_hashed_password)
+
+    new_hashed_password = "new_hashed_password"
+    await user_service.update_password(user_data.email, new_hashed_password)
+
+    updated_user = await user_service.get_user(user_data.email)
+    assert updated_user is not None
+    assert updated_user.hashed_password == new_hashed_password
+
+
+@pytest.mark.asyncio
+async def test_mark_user_as_verified(user_service: UserService, db_session_for_test):
+    """Test marking a user as verified."""
+    user_data = UserCreate(email="verify@example.com", username="verifyuser", password="Password123")
+    await user_service.create_user(user_data, "hashed_password")
+
+    success = await user_service.mark_user_as_verified(user_data.email)
+    assert success is True
+
+    verified_user = await user_service.get_user(user_data.email)
+    assert verified_user is not None
+    assert verified_user.is_verified is True
+
+
+@pytest.mark.asyncio
+async def test_verification_token_workflow(user_service: UserService, db_session_for_test):
+    """Test storing, retrieving, and deleting email verification tokens."""
+    from datetime import datetime, timedelta, timezone
+
+    user_email = "token_user@example.com"
+    # Create the user first
+    user_data = UserCreate(email=user_email, username="tokenuser", password="Password123")
+    await user_service.create_user(user_data, "hashed_password_for_token_user")
+
+    token = "test_verification_token_123"
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+
+    await user_service.store_email_verification_token(user_email, token, expires_at)
+
+    retrieved_email = await user_service.get_user_email_by_verification_token(token)
+    assert retrieved_email == user_email
+
+    # Test with expired token
+    expired_token = "expired_token_456"
+    expired_time = datetime.now(timezone.utc) - timedelta(hours=1)
+    await user_service.store_email_verification_token(user_email, expired_token, expired_time)
+    retrieved_expired_email = await user_service.get_user_email_by_verification_token(expired_token)
+    assert retrieved_expired_email is None
+
+    await user_service.delete_verification_token(token)
+    retrieved_email_after_delete = await user_service.get_user_email_by_verification_token(token)
+    assert retrieved_email_after_delete is None
+
+
+# Add more tests for edge cases, error handling (e.g., IntegrityError for duplicate emails if applicable based on DB schema)
+# and other UserService methods.
