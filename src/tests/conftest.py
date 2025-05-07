@@ -1,17 +1,19 @@
 import asyncio
-import os
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from redis.asyncio import Redis as AsyncRedisClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from src import dependencies
+from src.services.redis_service import RedisService
 
 # Ensure this path is correct to import your Base and init_db logic
 # If init_db also defines Base, that's fine. Otherwise, import Base separately if needed.
 from src.utils.init_db import Base  # Assuming Base is accessible here
 
-# Use a file-based SQLite database for easier inspection during test development
-TEST_DATABASE_URL = "sqlite+aiosqlite:///./test.db"
-# For purely in-memory (faster, ephemeral):
-# TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+# Use an in-memory SQLite database for tests
+TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
 
 @pytest.fixture(scope="session")
@@ -24,21 +26,36 @@ def event_loop(request):
     loop.close()
 
 
-@pytest.fixture(scope="session", autouse=True)
-def set_test_environment(monkeypatch):
+@pytest.fixture(scope="session")  # No longer autouse, will be pulled in by mock_global_dependencies...
+def set_test_environment(session_monkeypatch):  # Use a session-scoped monkeypatch
     """Set environment variables for the test session."""
-    monkeypatch.setenv("DATABASE_URL", TEST_DATABASE_URL)
-    monkeypatch.setenv("JWT_SECRET_KEY", "test_jwt_secret_key_for_testing_!@#$")
-    monkeypatch.setenv("JWT_REFRESH_SECRET_KEY", "test_jwt_refresh_secret_key_for_testing_!@#$")
-    monkeypatch.setenv("SENDGRID_API_KEY", "test_sendgrid_api_key")
-    monkeypatch.setenv("OPENAI_API_KEY", "test_openai_api_key")
-    monkeypatch.setenv("SERP_API_KEY", "test_serp_api_key")
-    monkeypatch.setenv("ENVIRONMENT", "test")  # Ensures IS_DEVELOPMENT might be false if needed
+    session_monkeypatch.setenv("DATABASE_URL", TEST_DATABASE_URL)
+    session_monkeypatch.setenv("JWT_SECRET_KEY", "test_jwt_secret_key_for_testing_!@#$")
+    session_monkeypatch.setenv("JWT_REFRESH_SECRET_KEY", "test_jwt_refresh_secret_key_for_testing_!@#$")
+    session_monkeypatch.setenv("SENDGRID_API_KEY", "test_sendgrid_api_key")
+    session_monkeypatch.setenv("OPENAI_API_KEY", "test_openai_api_key")
+    session_monkeypatch.setenv("SERP_API_KEY", "test_serp_api_key")
+    session_monkeypatch.setenv("ENVIRONMENT", "test")  # Ensures IS_DEVELOPMENT might be false if needed
     # Add any other environment variables required by your application during tests
 
 
 @pytest.fixture(scope="session")
-async def db_engine_with_schema(set_test_environment, event_loop):  # event_loop is now session-scoped
+def session_monkeypatch():
+    """A session-scoped monkeypatch.
+    Note: MonkeyPatch itself is designed for function scope for easy cleanup.
+    This provides a way to use its setenv/delenv for session setup.
+    Be cautious with other monkeypatch features like patching objects,
+    as their lifecycle might not align with session scope as cleanly.
+    """
+    from _pytest.monkeypatch import MonkeyPatch
+
+    mpatch = MonkeyPatch()
+    yield mpatch
+    mpatch.undo()
+
+
+@pytest.fixture(scope="session")
+async def db_engine_with_schema(set_test_environment, event_loop):
     """
     Creates a test database engine and initializes the schema once per session.
     Depends on set_test_environment to ensure DATABASE_URL is correctly set.
@@ -55,15 +72,14 @@ async def db_engine_with_schema(set_test_environment, event_loop):  # event_loop
         await conn.run_sync(Base.metadata.drop_all)
     await engine.dispose()
 
-    # Optional: Remove the test database file if it's file-based
-    if TEST_DATABASE_URL.startswith("sqlite+") and "memory" not in TEST_DATABASE_URL:
-        db_file_path = TEST_DATABASE_URL.split("///")[-1]
-        if os.path.exists(db_file_path):
-            try:
-                os.remove(db_file_path)
-            except OSError as e:
-                # Log error if removal fails, but don't fail the tests
-                print(f"Warning: Could not remove test database file {db_file_path}: {e}")
+    # No file to remove for in-memory databases
+    # if TEST_DATABASE_URL.startswith("sqlite+") and "memory" not in TEST_DATABASE_URL:
+    #     db_file_path = TEST_DATABASE_URL.split("///")[-1]
+    #     if os.path.exists(db_file_path):
+    #         try:
+    #             os.remove(db_file_path)
+    #         except OSError as e:
+    #             print(f"Warning: Could not remove test database file {db_file_path}: {e}")
 
 
 @pytest.fixture(scope="function")
@@ -91,42 +107,16 @@ async def db_session_for_test(db_engine_with_schema):
 # (which creates app.state.auth_service) don't use real external services
 # unless specifically intended (like UserService with a test DB).
 @pytest.fixture(scope="session", autouse=True)
-def mock_global_dependencies_for_lifespan(set_test_environment):  # Depends on env vars being set
-    from unittest.mock import AsyncMock, MagicMock
-
-    from redis.asyncio import Redis as AsyncRedisClient  # For spec
-
-    from src import dependencies  # Target where get_... is defined
-    from src.services.redis_service import RedisService
-
-    # --- Mock RedisService for lifespan ---
-    # Store original if it exists, to restore later
+def mock_global_dependencies_for_lifespan(set_test_environment):  # Depends on session-scoped set_test_environment
     original_redis_in_cache = dependencies._cache.get("redis")
-
     mock_redis_service_instance = MagicMock(spec=RedisService)
-    # Mock the actual redis client attribute within RedisService
     mock_redis_service_instance.redis = AsyncMock(spec=AsyncRedisClient)
-
-    # Mock methods of RedisService that the real AuthService (in app.state) might call
-    # Default behavior for is_jti_denylisted checks
     mock_redis_service_instance.get_cache = AsyncMock(return_value=None)
     mock_redis_service_instance.set_cache = AsyncMock()
     mock_redis_service_instance.delete_cache = AsyncMock()
-    # Add other methods if the real AuthService in app.state calls them
-
-    # Override the cached instance in dependencies module
     dependencies._cache["redis"] = mock_redis_service_instance
-
-    # Potentially mock other services like EmailService if its client makes real calls
-    # For UserService, conftest already sets up a test DB, so direct calls are okay for testing UserService itself.
-    # The real AuthService in app.state will use this test DB via the real UserService.
-
-    yield  # Tests run here
-
-    # --- Restore original state of dependencies._cache ---
+    yield
     if original_redis_in_cache:
         dependencies._cache["redis"] = original_redis_in_cache
-    elif "redis" in dependencies._cache:  # If it was set by us and not there before
+    elif "redis" in dependencies._cache:
         del dependencies._cache["redis"]
-
-    # Restore other mocked services if any were globally mocked here
