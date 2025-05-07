@@ -1,6 +1,7 @@
 """User service for managing user data in the database."""
 
 from datetime import datetime, timezone
+import os
 from typing import Optional
 
 from sqlalchemy import text
@@ -9,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from src.models.user import UserCreate, UserInDB
 from src.utils import logger
-from src.utils.config import DATABASE_URL
+from src.utils.config import DATABASE_URL as DEFAULT_CONFIG_DATABASE_URL
 
 
 class UserService:
@@ -17,9 +18,19 @@ class UserService:
 
     def __init__(self):
         """Initialize database connection."""
-        if not DATABASE_URL:
-            raise ValueError("DATABASE_URL must be set")
-        self.engine = create_async_engine(str(DATABASE_URL))
+        db_url = os.getenv("DATABASE_URL")
+        if not db_url:
+            db_url = DEFAULT_CONFIG_DATABASE_URL
+
+        if not db_url:
+            raise ValueError("DATABASE_URL is not set in environment or config.")
+
+        if "YOUR_DATABASE_CONNECTION_STRING_HERE" in db_url or not (
+            db_url.startswith("sqlite") or db_url.startswith("postgresql") or db_url.startswith("mysql")
+        ):
+            raise ValueError(f"Invalid or placeholder DATABASE_URL configured: {db_url}")
+
+        self.engine = create_async_engine(str(db_url))
         self.async_session = async_sessionmaker(self.engine, class_=AsyncSession, expire_on_commit=False)
 
     async def get_user(self, email: str) -> Optional[UserInDB]:
