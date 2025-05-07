@@ -15,6 +15,8 @@ from src.services.redis_service import RedisService
 # Explicitly import models to ensure they are registered with Base.metadata before create_all
 from src.utils.init_db import (
     Base,  # Assuming Base is accessible here
+    EmailVerificationToken,  # noqa: F401
+    User,  # noqa: F401
 )
 
 # Use an in-memory SQLite database for tests
