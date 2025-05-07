@@ -18,9 +18,8 @@ class UserService:
 
     def __init__(self, engine: Optional[AsyncEngine] = None):
         """Initialize database connection, using provided engine or creating a new one."""
-        if engine:
-            self.engine = engine
-        else:
+        self.engine = engine
+        if not self.engine:
             db_url = os.getenv("DATABASE_URL")
             if not db_url:
                 db_url = DEFAULT_CONFIG_DATABASE_URL
@@ -31,7 +30,6 @@ class UserService:
             ):
                 raise ValueError(f"Invalid or placeholder DATABASE_URL configured: {db_url}")
             self.engine = create_async_engine(str(db_url))
-
         self.async_session = async_sessionmaker(self.engine, class_=AsyncSession, expire_on_commit=False)
 
     async def get_user(self, email: str) -> Optional[UserInDB]:
@@ -50,12 +48,16 @@ class UserService:
             )
             user_row = result.first()
             if user_row:
+                user_row_dict = dict(user_row.items())
                 user_data = {
-                    "email": user_row.email,
-                    "username": user_row.username,
-                    "hashed_password": user_row.hashed_password,
-                    "is_verified": user_row.is_verified if hasattr(user_row, "is_verified") else False,
+                    "email": user_row_dict.get("email"),
+                    "username": user_row_dict.get("username"),
+                    "hashed_password": user_row_dict.get("hashed_password"),
+                    "is_verified": user_row_dict.get("is_verified", False),
                 }
+                if not all(user_data.get(k) is not None for k in ["email", "username", "hashed_password"]):
+                    logger.error(f"Missing critical user data fields for email: {email} from DB row: {user_row_dict}")
+                    return None
                 return UserInDB.model_validate(user_data)
             return None
 
@@ -86,13 +88,18 @@ class UserService:
                     )
                     user_row = result.first()
                     if user_row:
+                        user_row_dict = dict(user_row.items())
                         created_user_data = {
-                            "email": user_row.email,
-                            "username": user_row.username,
-                            "hashed_password": user_row.hashed_password,
-                            "is_verified": user_row.is_verified,
+                            "email": user_row_dict.get("email"),
+                            "username": user_row_dict.get("username"),
+                            "hashed_password": user_row_dict.get("hashed_password"),
+                            "is_verified": user_row_dict.get("is_verified"),
                         }
+                        if not all(created_user_data.get(k) is not None for k in ["email", "username", "hashed_password", "is_verified"]):
+                            logger.error(f"Missing critical fields from RETURNING clause for user: {user_data.email}")
+                            raise SQLAlchemyError("User creation failed to return complete user data.")
                         return UserInDB.model_validate(created_user_data)
+
                     logger.error("User creation with RETURNING did not yield a row.")
                     raise SQLAlchemyError("User creation failed to return user data.")
                 except SQLAlchemyError as e:
