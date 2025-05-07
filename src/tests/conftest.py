@@ -12,7 +12,7 @@ from httpx import ASGITransport, AsyncClient
 # Import MemoryStorage for mocking limiter
 from limits.storage import MemoryStorage
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 # Import the global limiter instance to patch its storage
 from src.dependencies import limiter
@@ -25,7 +25,7 @@ from src.services.auth_service import AuthService
 from src.services.email_service import EmailService
 from src.services.redis_service import RedisService
 from src.services.user_service import UserService
-from src.utils.config import (  # noqa. Re-adding this critical import
+from src.utils.config import (  # noqa
     DATABASE_URL,  # noqa: F401
     JWT_ALGORITHM,  # noqa: F401
     JWT_SECRET_KEY,  # noqa: F401
@@ -134,64 +134,73 @@ async def db_engine_with_schema(set_test_environment):
     Ensures the test database file is removed before starting if it exists.
     Depends on set_test_environment to ensure DATABASE_URL is correctly set.
     """
-    # Ensure set_test_environment has run (autouse=True, so it should have)
-
     db_file_path = None
     if TEST_DATABASE_URL.startswith("sqlite+") and "memory" not in TEST_DATABASE_URL:
         db_file_path = TEST_DATABASE_URL.split("///")[-1]
         if os.path.exists(db_file_path):
             try:
-                logger.info(f"Removing existing test database file: {db_file_path}")
+                logger.info(f"Attempting to remove existing test database file: {db_file_path}")
                 os.remove(db_file_path)
+                logger.info(f"Successfully removed existing test database file: {db_file_path}")
             except OSError as e:
-                logger.error(f"Error removing existing test database file {db_file_path}: {e}. Tests may fail.")
-                # Depending on severity, you might want to raise an error here to stop tests
-                # For now, we'll log and continue, but this could mask issues.
-                # raise TestSetupError(f"Could not remove existing test database: {e}") from e
+                logger.error(f"Error removing existing test database file {db_file_path} during setup: {e}. Tests may fail or be unreliable.")
+                # Consider whether to raise an error here to halt tests if a clean DB is critical.
+                # For now, logging and continuing.
 
-    engine = create_async_engine(TEST_DATABASE_URL)  # Use the test URL
-    async with engine.begin() as conn:
-        # Ensure all tables defined by Base.metadata are created.
-        # This requires User, EmailVerificationToken etc. to be imported somewhere to register with Base.
-        await conn.run_sync(Base.metadata.create_all)
-    logger.info(f"Database schema created at {TEST_DATABASE_URL}")
+    engine = create_async_engine(TEST_DATABASE_URL)
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info(f"Database schema created at {TEST_DATABASE_URL}")
 
-    yield engine  # Provide the engine to other fixtures/tests
+        yield engine  # Provide the engine to other fixtures/tests
 
-    # Teardown: Drop all tables after the test session.
-    # This is important for cleanup but the pre-removal handles the "already exists" issue.
-    logger.info(f"Dropping database schema at {TEST_DATABASE_URL}")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-    await engine.dispose()
+    finally:
+        # Teardown: Dispose of the engine first to release connections
+        logger.info(f"Disposing database engine for {TEST_DATABASE_URL}")
+        await engine.dispose()  # Ensure all connections are closed
 
-    # Remove the SQLite file after tests if it's not an in-memory DB and was created
-    if db_file_path and os.path.exists(db_file_path):
+        # Then, attempt to drop tables (optional if file is removed, but good practice)
+        # Re-create a temporary engine for dropping tables as the original might be disposed.
+        # This is a bit heavy but ensures operations can complete on a disposed engine context.
+        # Alternatively, drop tables before disposing the main engine if that pattern works.
+        # For simplicity and robustness against state, a new temp engine for drop is safer.
+        logger.info(f"Attempting to drop all tables for {TEST_DATABASE_URL}")
+        temp_engine_for_drop = create_async_engine(TEST_DATABASE_URL)
         try:
-            os.remove(db_file_path)
-            logger.info(f"Test database file {db_file_path} removed after session.")
-        except OSError as e:
-            logger.warning(f"Warning: Could not remove test database file {db_file_path} post-session: {e}")
+            async with temp_engine_for_drop.begin() as conn:
+                await conn.run_sync(Base.metadata.drop_all)
+            logger.info(f"Successfully dropped all tables for {TEST_DATABASE_URL}")
+        except Exception as e:
+            logger.error(f"Error dropping tables for {TEST_DATABASE_URL}: {e}")
+        finally:
+            await temp_engine_for_drop.dispose()
+
+        # Finally, remove the SQLite file if it exists
+        if db_file_path and os.path.exists(db_file_path):
+            try:
+                logger.info(f"Attempting to remove test database file {db_file_path} post-session.")
+                os.remove(db_file_path)
+                logger.info(f"Test database file {db_file_path} removed after session.")
+            except OSError as e:
+                logger.warning(f"Warning: Could not remove test database file {db_file_path} post-session: {e}. It might be locked.")
 
 
 @pytest.fixture(scope="function")
-async def db_session_for_test(db_engine_with_schema):  # Depends on the session-scoped engine
+async def db_session_for_test(db_engine_with_schema: AsyncEngine):  # Depends on the session-scoped engine
     """
     Provides a database session for a single test function.
     Ensures the session is rolled back after the test.
     """
-    # db_engine_with_schema is the engine instance yielded by the session-scoped fixture
     async_session_factory = async_sessionmaker(bind=db_engine_with_schema, class_=AsyncSession, expire_on_commit=False)
     async with async_session_factory() as session:
         try:
             yield session
-            # If you want to commit changes made during a test:
-            # await session.commit() # Typically not done in unit/integration tests to keep them isolated
-        except:  # noqa
-            await session.rollback()  # Rollback on any exception during the test
+        except Exception:
+            await session.rollback()
             raise
         finally:
-            await session.close()  # Ensure session is closed
+            await session.close()
 
 
 # --- Application and Client Fixtures ---
