@@ -10,7 +10,10 @@ from src.services.redis_service import RedisService
 
 # Ensure this path is correct to import your Base and init_db logic
 # If init_db also defines Base, that's fine. Otherwise, import Base separately if needed.
-from src.utils.init_db import Base  # Assuming Base is accessible here
+# Explicitly import models to ensure they are registered with Base.metadata before create_all
+from src.utils.init_db import (
+    Base,  # Assuming Base is accessible here
+)
 
 # Use an in-memory SQLite database for tests
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
