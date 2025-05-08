@@ -38,7 +38,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
         request_path = request.url.path
 
         # 1. Check if route is public
-        # Paths starting with /docs or /openapi are always public (for Swagger/OpenAPI UI)
         if request_path.startswith("/docs") or request_path.startswith("/openapi"):
             logger.debug("Allowing public access to OpenAPI/docs: %s", request_path)
             response = await call_next(request)
@@ -50,8 +49,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
             response = await call_next(request)
             return response
 
-        # If the path is not public, it requires authentication.
-        # This includes /api/* routes and /auth/* routes not in PUBLIC_PATHS.
         logger.debug("Protected route, performing authentication for: %s", request_path)
 
         # 2. Extract Token
@@ -101,9 +98,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 logger.warning("Invalid token type ('%s') or missing subject for: %s", token_type, request_path)
                 raise jwt.InvalidTokenError("Invalid token type or content")
 
-            # 4. Attach user email to request.state for downstream use (e.g., rate limiter)
+            # 4. Attach user email and token details to request.state for downstream use
             request.state.user_email = email
-            logger.debug("Authenticated user '%s' via middleware for path %s", email, request_path)
+            request.state.token_jti = access_jti
+            request.state.token_exp = payload.get("exp")  # Store expiry timestamp
+            logger.debug("Authenticated user '%s' via middleware for path %s (JTI: %s)", email, request_path, access_jti)
 
         except jwt.ExpiredSignatureError:
             logger.warning("Expired token received for protected route: %s", request_path)

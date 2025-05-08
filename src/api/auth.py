@@ -4,13 +4,12 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-import jwt
 
 from src.dependencies import get_auth_service, limiter
 from src.models.user import Token, UserCreate, UserLogin
 from src.services.auth_service import AuthService
 from src.utils import logger
-from src.utils.config import JWT_ALGORITHM, JWT_SECRET_KEY
+from src.utils.config import JWT_SECRET_KEY
 
 router = APIRouter()
 security = HTTPBearer()
@@ -136,45 +135,42 @@ async def verify_user_email(token: str, auth_service: AuthService = Depends(get_
 
 @router.post("/logout")
 async def logout(
-    auth: HTTPAuthorizationCredentials = Depends(security),
+    request: Request,
     auth_service: AuthService = Depends(get_auth_service),
 ):
-    """Logs out the user by denylisting the current access token."""
-    token_str = auth.credentials
+    """Logs out the user by denylisting the current access token JTI found in request state."""
     try:
-        if not JWT_SECRET_KEY:
+        # Retrieve JTI and EXP directly from state set by middleware
+        access_jti = getattr(request.state, "token_jti", None)
+        exp_timestamp = getattr(request.state, "token_exp", None)
+        user_email = getattr(request.state, "user_email", "Unknown User")  # Get email for logging
+
+        if not access_jti:
+            # This might happen if middleware failed or didn't run
+            logger.warning("Logout attempt failed: JTI not found in request state for user %s.", user_email)
+            # Return success to the client as they intended to logout, but log the issue.
+            return {"message": "Logout processed, but token details were missing."}
+
+        if not JWT_SECRET_KEY:  # Keep this check for safety
             logger.error("Logout attempt failed: JWT_SECRET_KEY is not configured.")
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Server configuration error for logout.")
 
-        payload = jwt.decode(
-            token_str, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM], options={"verify_exp": False}
-        )  # Decode even if expired to get JTI
-        access_jti = payload.get("jti")
-        # Calculate remaining validity to set denylist TTL accurately
-        # If token is already expired, exp_timestamp will be in the past.
-        exp_timestamp = payload.get("exp", 0)
+        # Calculate remaining validity from state
         current_timestamp = int(datetime.now(timezone.utc).timestamp())
-        # Denylist for at least a short period even if expired, or up to its original expiry
-        # Max ensures we don't have negative TTL. Min ensures a short denylist period if already expired.
-        denylist_ttl = max(0, exp_timestamp - current_timestamp)  # Time left until original expiry
-        if denylist_ttl <= 0:  # Ensure a minimum denylist period even if token already expired
-            denylist_ttl = 60  # Denylist for at least 60s
+        denylist_ttl = 0
+        if exp_timestamp:
+            denylist_ttl = max(0, exp_timestamp - current_timestamp)
+        if denylist_ttl <= 0:
+            denylist_ttl = 60  # Ensure minimum denylist period
 
-        if access_jti:
-            await auth_service.add_jti_to_denylist(access_jti, denylist_ttl)
-            logger.info("User %s logged out. Access token JTI %s denylisted.", payload.get("sub"), access_jti)
-            return {"message": "Logout successful. Token has been invalidated."}
-        else:
-            logger.warning("Logout attempt with token missing JTI.")
-            # Still return success as client expects logout, but log it.
-            return {"message": "Logout processed. Token may not be fully invalidated if missing JTI."}
+        # Denylist the JTI
+        await auth_service.add_jti_to_denylist(access_jti, denylist_ttl)
+        logger.info("User %s logged out. Access token JTI %s denylisted.", user_email, access_jti)
+        return {"message": "Logout successful. Token has been invalidated."}
 
-    except jwt.InvalidTokenError as e:
-        # This can happen if the token is completely malformed, not just expired
-        logger.warning("Logout attempt with invalid token: %s", e)
-        # Even if token is invalid, client wants to logout, so don't error out here aggressively.
-        # But a truly malformed token can't be denylisted by JTI.
-        return {"message": "Logout processed. Token was invalid."}
+    except HTTPException as http_exc:  # Re-raise HTTPExceptions
+        raise http_exc
     except Exception as e:
-        logger.error("Error during logout: %s", e)
+        user_email = getattr(request.state, "user_email", "Unknown User")  # Get email for logging
+        logger.error("Error during logout for user %s: %s", user_email, e)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error processing logout.")

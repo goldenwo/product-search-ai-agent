@@ -5,20 +5,16 @@ from unittest.mock import AsyncMock, MagicMock
 
 from fastapi import FastAPI
 
-# from dotenv import load_dotenv # Removed by user, re-evaluate if needed
-from httpx import ASGITransport, AsyncClient
-
-# from sqlalchemy.orm import sessionmaker # Removed by user, was previously commented out or unused
 # Import MemoryStorage for mocking limiter
 from limits.storage import MemoryStorage
 import pytest
+import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 # Import the global limiter instance to patch its storage
 from src.dependencies import limiter
 
 # If you have other models in src/models/ that use the same Base, import them too:
-# from src.models.some_other_model import SomeOtherModel
 from src.main import app as fastapi_app
 from src.models.base import Base  # This import needs src/models/base.py to define Base
 from src.services.auth_service import AuthService
@@ -40,6 +36,14 @@ from src.utils.init_db import EmailVerificationToken, User  # noqa: F401
 # Configure logger for tests
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
+
+
+@pytest.fixture(scope="session")
+def event_loop(request):
+    """Create an instance of the default event loop for each test session."""
+    loop = asyncio.get_event_loop_policy().new_event_loop()
+    yield loop
+    loop.close()
 
 
 # Determine the test database URL
@@ -126,13 +130,14 @@ def mock_limiter_storage_for_tests(session_monkeypatch):
 
 
 # --- Database Fixtures ---
-# Ensure models are imported before this fixture is defined so Base.metadata knows about them
+
+
 @pytest.fixture(scope="session")
-async def db_engine_with_schema(set_test_environment):
+def db_engine(set_test_environment):
     """
-    Creates a test database engine and initializes the schema once per session.
+    Synchronously creates the test database engine once per session.
     Ensures the test database file is removed before starting if it exists.
-    Depends on set_test_environment to ensure DATABASE_URL is correctly set.
+    Yields the engine instance. Disposal is handled by _manage_db_engine_lifecycle.
     """
     db_file_path = None
     if TEST_DATABASE_URL.startswith("sqlite+") and "memory" not in TEST_DATABASE_URL:
@@ -144,55 +149,72 @@ async def db_engine_with_schema(set_test_environment):
                 logger.info(f"Successfully removed existing test database file: {db_file_path}")
             except OSError as e:
                 logger.error(f"Error removing existing test database file {db_file_path} during setup: {e}. Tests may fail or be unreliable.")
-                # Consider whether to raise an error here to halt tests if a clean DB is critical.
-                # For now, logging and continuing.
 
+    # Engine creation itself is synchronous
     engine = create_async_engine(TEST_DATABASE_URL)
-    try:
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        logger.info(f"Database schema created at {TEST_DATABASE_URL}")
+    logger.info(f"Database engine created for {TEST_DATABASE_URL}")
 
-        yield engine  # Provide the engine to other fixtures/tests
+    yield engine  # Provide the engine instance
 
-    finally:
-        # Teardown: Dispose of the engine first to release connections
-        logger.info(f"Disposing database engine for {TEST_DATABASE_URL}")
-        await engine.dispose()  # Ensure all connections are closed
+    # Teardown: File removal (Disposal handled separately)
+    logger.info("db_engine fixture teardown: File removal check.")
+    # await engine.dispose() # REMOVED - Handled by _manage_db_engine_lifecycle
 
-        # Then, attempt to drop tables (optional if file is removed, but good practice)
-        # Re-create a temporary engine for dropping tables as the original might be disposed.
-        # This is a bit heavy but ensures operations can complete on a disposed engine context.
-        # Alternatively, drop tables before disposing the main engine if that pattern works.
-        # For simplicity and robustness against state, a new temp engine for drop is safer.
-        logger.info(f"Attempting to drop all tables for {TEST_DATABASE_URL}")
-        temp_engine_for_drop = create_async_engine(TEST_DATABASE_URL)
+    if db_file_path and os.path.exists(db_file_path):
         try:
-            async with temp_engine_for_drop.begin() as conn:
+            logger.info(f"Attempting final removal of test database file {db_file_path} post-session.")
+            os.remove(db_file_path)
+            logger.info(f"Test database file {db_file_path} removed after session.")
+        except OSError as e:
+            logger.warning(f"Warning: Could not remove test database file {db_file_path} post-session: {e}. It might be locked.")
+
+
+@pytest_asyncio.fixture(scope="session", autouse=True)
+async def _manage_db_engine_lifecycle(db_engine: AsyncEngine):
+    """Automatically disposes the session-scoped engine at the end of the test session."""
+    yield  # Fixture does setup/teardown via dependency and finally block
+    # Teardown: Dispose the engine asynchronously
+    logger.info(f"_manage_db_engine_lifecycle: Disposing engine {db_engine}")
+    try:
+        await db_engine.dispose()
+        logger.info("_manage_db_engine_lifecycle: Engine disposed successfully.")
+    except Exception as e:
+        logger.error(f"_manage_db_engine_lifecycle: Error disposing engine: {e}")
+
+
+@pytest_asyncio.fixture(scope="function")
+async def initialize_schema(db_engine: AsyncEngine):
+    """
+    Initializes the database schema at the start of each function/test and drops it at the end.
+    """
+    try:
+        async with db_engine.begin() as conn:
+            logger.info("Initializing schema via initialize_schema fixture...")
+            await conn.run_sync(Base.metadata.create_all)
+            logger.info("Database schema created.")
+        yield  # Ready for tests
+    finally:
+        # Teardown: Drop tables and dispose engine
+        logger.info("Dropping schema via initialize_schema fixture...")
+        try:
+            async with db_engine.begin() as conn:
                 await conn.run_sync(Base.metadata.drop_all)
-            logger.info(f"Successfully dropped all tables for {TEST_DATABASE_URL}")
+            logger.info("Successfully dropped all tables.")
         except Exception as e:
-            logger.error(f"Error dropping tables for {TEST_DATABASE_URL}: {e}")
-        finally:
-            await temp_engine_for_drop.dispose()
+            logger.error(f"Error dropping tables: {e}")
 
-        # Finally, remove the SQLite file if it exists
-        if db_file_path and os.path.exists(db_file_path):
-            try:
-                logger.info(f"Attempting to remove test database file {db_file_path} post-session.")
-                os.remove(db_file_path)
-                logger.info(f"Test database file {db_file_path} removed after session.")
-            except OSError as e:
-                logger.warning(f"Warning: Could not remove test database file {db_file_path} post-session: {e}. It might be locked.")
+        # logger.info(f"Disposing engine via initialize_schema fixture...") # Removed
+        # await db_engine.dispose() # Removed
 
 
-@pytest.fixture(scope="function")
-async def db_session_for_test(db_engine_with_schema: AsyncEngine):  # Depends on the session-scoped engine
+@pytest_asyncio.fixture(scope="function")
+async def db_session_for_test(db_engine: AsyncEngine, initialize_schema):  # Depends on engine AND schema being ready
     """
     Provides a database session for a single test function.
     Ensures the session is rolled back after the test.
+    Depends on db_engine and initialize_schema.
     """
-    async_session_factory = async_sessionmaker(bind=db_engine_with_schema, class_=AsyncSession, expire_on_commit=False)
+    async_session_factory = async_sessionmaker(bind=db_engine, class_=AsyncSession, expire_on_commit=False)
     async with async_session_factory() as session:
         try:
             yield session
@@ -204,53 +226,68 @@ async def db_session_for_test(db_engine_with_schema: AsyncEngine):  # Depends on
 
 
 # --- Application and Client Fixtures ---
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create an instance of the default event loop for each test session."""
-    policy = asyncio.get_event_loop_policy()
-    loop = policy.new_event_loop()
-    yield loop
-    loop.close()
 
 
+# Simple fixture returning the app instance
 @pytest.fixture(scope="session")
-async def app(event_loop, mock_global_dependencies_for_lifespan):  # Ensure lifespan dependencies are mocked
-    """
-    Fixture to provide the FastAPI application instance for testing.
-    This is session-scoped as the app structure doesn't change per test.
-    """
-    # The app is imported as fastapi_app to avoid name collision
-    # mock_global_dependencies_for_lifespan will ensure app.state.auth_service.redis_service is mocked
+def app() -> FastAPI:
+    """Provides the raw FastAPI app instance (session-scoped)."""
     return fastapi_app
 
 
-@pytest.fixture(scope="function")
-async def client(app: FastAPI):  # Explicitly type hint the app fixture parameter
+# Async fixture to manage app state setup/teardown for the session
+@pytest_asyncio.fixture(scope="session", autouse=True)
+async def _setup_app_state(app: FastAPI, mock_global_dependencies_for_lifespan):
     """
-    Fixture to provide an HTTPX AsyncClient for making requests to the test application.
+    Sets up and tears down app.state for the test session.
+    Runs automatically due to autouse=True.
+    Depends on the 'app' fixture and mock setup.
     """
-    # Pass the app instance, now explicitly typed, to ASGITransport
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        yield ac
+    # Create mocks needed for app.state.auth_service
+    mock_redis_s = MagicMock(spec=RedisService)
+    mock_redis_s.redis = AsyncMock()
+    mock_user_s = MagicMock(spec=UserService)
+    mock_user_s.get_user = AsyncMock(return_value=None)
+    mock_email_s = MagicMock(spec=EmailService)
+    mock_email_s.send_verification_email = AsyncMock()
+
+    # Create the AuthService instance for app.state
+    mock_auth_s_for_state = AuthService(redis_service=mock_redis_s, user_service=mock_user_s, email_service=mock_email_s)
+    mock_auth_s_for_state.rate_limit.redis = mock_redis_s.redis
+
+    # Explicitly configure methods on the state mock needed by middleware
+    mock_auth_s_for_state.is_jti_denylisted = AsyncMock(return_value=False)
+    mock_auth_s_for_state.add_jti_to_denylist = AsyncMock()  # Configure add method as well
+    # Add other methods if middleware were to call them
+
+    # Set state on the app instance provided by the 'app' fixture
+    app.state.auth_service = mock_auth_s_for_state
+    app.state.limiter = limiter  # Global limiter instance
+    logger.info("Session-scoped app state setup completed (State AuthService configured).")
+
+    yield  # Let the session run
+
+    # Teardown state
+    logger.info("Session-scoped app state teardown.")
+    if hasattr(app.state, "auth_service"):
+        delattr(app.state, "auth_service")
+    if hasattr(app.state, "limiter"):
+        delattr(app.state, "limiter")
 
 
 # --- Service Mocks and Fixtures ---
 
 
+# mock_global_dependencies_for_lifespan remains session-scoped, autouse=True
 @pytest.fixture(scope="session", autouse=True)
 def mock_global_dependencies_for_lifespan(session_monkeypatch, set_test_environment):
     """
-    Mocks global dependencies that might be initialized during FastAPI lifespan,
-    BEFORE the app or client fixtures are set up.
-    Specifically targets RedisService used by AuthService on app.state by patching
-    the `get_redis_service` dependency getter.
+    Mocks global dependencies (like RedisService getter) needed BEFORE app/lifespan.
+    Session-scoped and autouse.
     """
-    logger.info("Patching src.dependencies.get_redis_service to return a mock RedisService for the session.")
-
-    # 1. Create a fully configured mock RedisService instance
+    logger.info("Patching src.dependencies.get_redis_service for session scope.")
     mock_redis_instance = MagicMock(spec=RedisService)
-    mock_redis_instance.client = AsyncMock()  # Mock the underlying redis client attribute
+    mock_redis_instance.redis = AsyncMock()
     mock_redis_instance.get_value = AsyncMock(return_value=None)
     mock_redis_instance.set_value = AsyncMock()
     mock_redis_instance.delete_value = AsyncMock()
@@ -262,82 +299,9 @@ def mock_global_dependencies_for_lifespan(session_monkeypatch, set_test_environm
     mock_redis_instance.sismember = AsyncMock(return_value=False)
     mock_redis_instance.ping = AsyncMock(return_value=True)
     mock_redis_instance.close = AsyncMock()
-    # You can add other methods/attributes if AuthService or RedisService itself uses them upon init
-    # For example, if RedisService sets up its own redis_url:
-    # mock_redis_instance.redis_url = f"redis://mock_host:1234/9"
-
-    # 2. Patch the getter function in src.dependencies
-    # This ensures that when main.py's lifespan calls get_redis_service(),
-    # it receives our mock_redis_instance.
     session_monkeypatch.setattr("src.dependencies.get_redis_service", lambda: mock_redis_instance)
-
-    # Also, to be thorough, if dependencies._cache is used by get_redis_service,
-    # you might want to directly set the cache entry if the setattr on the getter isn't enough
-    # or if other parts of the code might access dependencies._cache["redis"] directly.
-    # from src import dependencies # if not already imported at top level of conftest
-    # dependencies._cache["redis"] = mock_redis_instance
-    # However, patching the getter is generally cleaner if that's the sole entry point.
-
-    logger.info("src.dependencies.get_redis_service patched to return a specific mock RedisService instance.")
-
-    # The original __init__ patching is no longer needed:
-    # def mock_redis_init(self, host, port, db, password=None):
-    #     ...
-    # session_monkeypatch.setattr(RedisService, "__init__", mock_redis_init)
+    logger.info("src.dependencies.get_redis_service patched for session scope.")
+    # No return value needed now
 
 
-@pytest.fixture
-def mock_user_service():
-    service = MagicMock(spec=UserService)
-    # Define responses for commonly used async methods
-    service.create_user = AsyncMock()
-    service.get_user_by_email = AsyncMock(return_value=None)
-    service.get_user_by_username = AsyncMock(return_value=None)
-    service.get_user_by_id = AsyncMock(return_value=None)
-    service.verify_user_email = AsyncMock()
-    service.update_user_password = AsyncMock()
-    service.create_email_verification_token = AsyncMock(return_value="test_token_123")
-    service.get_email_verification_token = AsyncMock(return_value=None)
-    service.delete_email_verification_token = AsyncMock()
-    return service
-
-
-@pytest.fixture
-def mock_email_service():
-    service = MagicMock(spec=EmailService)
-    service.send_verification_email = AsyncMock()
-    service.send_password_reset_email = AsyncMock()
-    service.send_password_changed_email = AsyncMock()
-    return service
-
-
-@pytest.fixture
-def mock_redis_service():
-    """Provides a MagicMock for RedisService for direct injection if needed."""
-    mock_service = MagicMock(spec=RedisService)
-    mock_service.get_value = AsyncMock(return_value=None)
-    mock_service.set_value = AsyncMock()
-    mock_service.delete_value = AsyncMock()
-    mock_service.increment_value = AsyncMock(return_value=1)
-    mock_service.get_int_value = AsyncMock(return_value=0)
-    mock_service.set_value_with_expiry = AsyncMock()
-    mock_service.exists = AsyncMock(return_value=False)
-    mock_service.sadd = AsyncMock()
-    mock_service.sismember = AsyncMock(return_value=False)
-    mock_service.ping = AsyncMock(return_value=True)
-    mock_service.close = AsyncMock()
-    return mock_service
-
-
-@pytest.fixture
-def mocked_auth_service(mock_user_service, mock_redis_service, mock_email_service):
-    """
-    Provides an AuthService instance with mocked dependencies.
-    """
-    # set_test_environment (autouse=True) ensures JWT env vars are set
-    auth_service = AuthService(
-        user_service=mock_user_service,
-        redis_service=mock_redis_service,  # Uses the function-scoped mock here
-        email_service=mock_email_service,
-    )
-    return auth_service
+# ... (rest of fixtures)
