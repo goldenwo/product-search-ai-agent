@@ -48,17 +48,11 @@ class EmailService:
             logger.info("Password reset email would be sent to %s with token %s", email, token)
             return True
 
-        # Create reset link for email
         reset_link = f"{FRONTEND_URL}/reset-password?token={token}"
-
-        # Construct email template
         html_content = self._create_reset_email_template(username, reset_link)
-
-        # Create mail object
         message = Mail(from_email=self.sender, to_emails=email, subject="Password Reset Request", html_content=html_content)
 
         try:
-            # Send email via client
             if self.client:
                 success = self.client.send_mail(message)
                 if success:
@@ -66,7 +60,7 @@ class EmailService:
                 return success
             return False
         except Exception as e:
-            logger.error("❌ Failed to send reset email to %s: %s", email, str(e))
+            logger.error("❌ Failed to send reset email to %s: %s", email, e)
             raise
 
     def _create_reset_email_template(self, username: str, reset_link: str) -> str:
@@ -116,9 +110,8 @@ class EmailService:
                 return success
             return False
         except Exception as e:
-            logger.error("❌ Failed to send password change notification to %s: %s", email, str(e))
-            # Optionally re-raise, but for notifications, often we just log the error
-            return False  # Or raise, depending on desired behavior
+            logger.error("❌ Failed to send password change notification to %s: %s", email, e)
+            return False
 
     def _create_password_change_template(self, username: str) -> str:
         """
@@ -167,8 +160,8 @@ class EmailService:
                 return success
             return False
         except Exception as e:
-            logger.error("❌ Failed to send verification email to %s: %s", email, str(e))
-            return False  # Or raise, depending on desired behavior
+            logger.error("❌ Failed to send verification email to %s: %s", email, e)
+            return False
 
     def _create_verification_email_template(self, username: str, verification_link: str) -> str:
         """

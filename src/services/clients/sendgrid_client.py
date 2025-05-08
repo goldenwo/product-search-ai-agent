@@ -57,5 +57,5 @@ class SendGridClient:
                 return False
 
         except Exception as e:
-            logger.error("❌ SendGrid API error: %s", str(e))
+            logger.error("❌ SendGrid API error: %s", e)
             raise

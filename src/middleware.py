@@ -58,15 +58,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return JSONResponse(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 content={"detail": "Not authenticated"},
-                headers={"WWW-Authenticate": "Bearer"},  # Standard header for 401
+                headers={"WWW-Authenticate": "Bearer"},
             )
 
         token = auth_header.split("Bearer ")[1]
 
         # 3. Verify Token & Populate State
-        # Note: This middleware performs essential JWT decoding and validation (signature, expiry, type).
-        # It may not include *all* checks present in AuthService.verify_token (e.g., DB lookups, blacklisting).
-        # Ensure core validation logic (secret, algorithm) remains consistent.
         try:
             if not JWT_SECRET_KEY:
                 logger.error("JWT_SECRET_KEY is not configured on the server.")
@@ -78,12 +75,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
             token_type: str | None = payload.get("type")
             access_jti: str | None = payload.get("jti")
 
-            # Check if JTI is denylisted - this requires AuthService instance
-            # This is where proper DI for middleware is needed.
-            # For this example, we assume auth_service can be resolved.
-            # This part of the code will need refinement based on how AuthService is made available here.
-            # For demonstration, let's assume a (simplified, non-DI) way to get it:
-            temp_auth_service = request.app.state.auth_service  # Assuming auth_service is attached to app.state
+            # Check if JTI is denylisted
+            temp_auth_service = request.app.state.auth_service
 
             if await temp_auth_service.is_jti_denylisted(access_jti):
                 logger.warning("Denylisted access token presented for user: %s, JTI: %s", email, access_jti)
@@ -101,7 +94,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             # 4. Attach user email and token details to request.state for downstream use
             request.state.user_email = email
             request.state.token_jti = access_jti
-            request.state.token_exp = payload.get("exp")  # Store expiry timestamp
+            request.state.token_exp = payload.get("exp")
             logger.debug("Authenticated user '%s' via middleware for path %s (JTI: %s)", email, request_path, access_jti)
 
         except jwt.ExpiredSignatureError:
@@ -114,14 +107,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
         except jwt.InvalidTokenError as e:
             logger.warning("Invalid token for protected route: %s - Error: %s", request_path, e)
             return JSONResponse(
-                status_code=status.HTTP_401_UNAUTHORIZED,  # Use 401 for invalid token structure/signature issues
-                content={"detail": f"Invalid token: {e}"},  # Keep f-string here as detail includes the exception
-                headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},  # More specific header
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content={"detail": f"Invalid token: {e}"},  # Keep f-string here if exception needs direct inclusion
+                headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
             )
-        except HTTPException as http_exc:  # Re-raise specific HTTP exceptions
+        except HTTPException as http_exc:
             raise http_exc
         except Exception as e:
-            # Catch unexpected errors during verification
             logger.exception("Unexpected error during middleware auth verification for %s: %s", request_path, e)
             return JSONResponse(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -133,7 +125,5 @@ class AuthMiddleware(BaseHTTPMiddleware):
             response = await call_next(request)
             return response
         except Exception as e:
-            # Catch errors raised further down the chain after auth passed
             logger.exception("Error after auth middleware for %s (User: %s): %s", request_path, getattr(request.state, "user_email", "N/A"), e)
-            # Let FastAPI's default exception handling take over
-            raise  # Re-raise the exception for FastAPI handlers
+            raise

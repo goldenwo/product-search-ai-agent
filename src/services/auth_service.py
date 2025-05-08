@@ -137,13 +137,9 @@ class AuthService:
             return None
 
         # Check if user is verified.
-        # UserInDB model now has is_verified, and UserService.get_user populates it.
         if not user.is_verified:
             logger.warning("Login attempt by unverified user: %s", email)
-            # Option 1: Deny login completely
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Email not verified. Please check your inbox for a verification link.")
-            # Option 2: Allow login but with a special status/limited access (more complex)
-            # For now, let's deny login.
 
         logger.info("User authenticated successfully: %s", email)
         return user
@@ -170,7 +166,6 @@ class AuthService:
             logger.info("Verification email initiated for %s", created_user.email)
         except Exception as e:
             # Log error but don't let it fail the registration process itself.
-            # User can request a resend later.
             logger.error("Failed to send verification email for %s: %s", created_user.email, e)
 
         return created_user
@@ -410,7 +405,6 @@ class AuthService:
 
         if not email_to_verify:
             logger.warning("Attempt to verify email with invalid or expired token: %s", token)
-            # Optionally, you could distinguish between expired and truly invalid if your token storage has expiry info
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired verification token.")
 
         user = await self.user_service.get_user(email_to_verify)
@@ -437,7 +431,7 @@ class AuthService:
         # Delete the token so it can't be reused
         await self.delete_email_verification_token(token)
         logger.info("Email successfully verified for user %s using token %s.", user.email, token)
-        return True  # Or return the user object
+        return True
 
     async def add_jti_to_denylist(self, jti: str, expires_in: int):
         """Adds a JTI to the denylist in Redis with an expiry."""
@@ -457,4 +451,4 @@ class AuthService:
             return bool(await self.redis_service.get_cache(f"denylist_jti:{jti}"))
         except Exception as e:
             logger.error("Failed to check JTI %s in denylist: %s", jti, e)
-            return False  # Fail safe: if error, assume not denylisted to avoid locking out users
+            return False  # Fail safe: if error, assume not denylisted

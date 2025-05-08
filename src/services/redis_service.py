@@ -38,10 +38,10 @@ class RedisService:
             data = await self.redis.get(key)
             return json.loads(data) if data else None
         except json.JSONDecodeError as e:
-            logger.error("❌ Redis JSON decode error: %s", str(e))
+            logger.error("❌ Redis JSON decode error: %s", e)
             return None
         except RedisError as e:
-            logger.error("❌ Redis connection error: %s", str(e))
+            logger.error("❌ Redis connection error: %s", e)
             return None
 
     async def set_cache(self, key: str, value: Any, ttl: Optional[int] = None) -> bool:
@@ -60,11 +60,11 @@ class RedisService:
             expiry = ttl if ttl is not None else self.cache_ttl
             await self.redis.setex(key, expiry, json.dumps(value))
             return True
-        except TypeError as e:  # json.dumps() raises TypeError for encoding errors
-            logger.error("❌ Redis JSON encode error: %s", str(e))
+        except TypeError as e:
+            logger.error("❌ Redis JSON encode error: %s", e)
             return False
         except RedisError as e:
-            logger.error("❌ Redis connection error: %s", str(e))
+            logger.error("❌ Redis connection error: %s", e)
             return False
 
     async def delete_cache(self, key: str):

@@ -104,7 +104,6 @@ async def search(
 
         # Cache the results
         try:
-            # Use the specific TTL defined in config
             await redis_cache.set_cache(cache_key, search_results, ttl=CACHE_SEARCH_RESULTS_TTL)
             logger.info("Cached search results for key: '%s' (TTL: %ds). User: %s", cache_key, CACHE_SEARCH_RESULTS_TTL, email)
         except redis.RedisError as redis_err:
@@ -117,7 +116,6 @@ async def search(
 
     # --- Error Handling ---
     except RateLimitExceeded as e:
-        # Note: Rate limit errors are also handled globally in main.py
         logger.warning("Rate limit exceeded for user %s. Detail: %s", email, e.detail)
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=f"Rate limit exceeded: {e.detail}")
     except (OpenAIServiceError, SerpAPIException) as e:
@@ -126,10 +124,8 @@ async def search(
         status_code = getattr(e, "status_code", 503)
         raise HTTPException(status_code=status_code, detail="Service temporarily unavailable, please try again later.")
     except ValueError as e:
-        # Catch specific ValueErrors potentially raised by deeper logic (e.g., data parsing)
         logger.error("❌ Invalid data encountered during search for query '%s', User '%s': %s", query, email, e)
         raise HTTPException(status_code=400, detail="Invalid data encountered during search.")
     except Exception as e:
-        # Catch-all for unexpected errors during the search agent's processing
         logger.exception("💥 Unexpected internal error during search for query '%s', User '%s': %s", query, email, e)
         raise HTTPException(status_code=500, detail="An internal server error occurred processing your request.")

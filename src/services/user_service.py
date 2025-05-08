@@ -56,7 +56,7 @@ class UserService:
                     "is_verified": user_row_dict.get("is_verified", False),
                 }
                 if not all(user_data.get(k) is not None for k in ["email", "username", "hashed_password"]):
-                    logger.error(f"Missing critical user data fields for email: {email} from DB row: {user_row_dict}")
+                    logger.error("Missing critical user data fields for email: %s from DB row: %s", email, user_row_dict)
                     return None
                 return UserInDB.model_validate(user_data)
             return None
@@ -96,14 +96,14 @@ class UserService:
                             "is_verified": user_row_dict.get("is_verified"),
                         }
                         if not all(created_user_data.get(k) is not None for k in ["email", "username", "hashed_password", "is_verified"]):
-                            logger.error(f"Missing critical fields from RETURNING clause for user: {user_data.email}")
+                            logger.error("Missing critical fields from RETURNING clause for user: %s", user_data.email)
                             raise SQLAlchemyError("User creation failed to return complete user data.")
                         return UserInDB.model_validate(created_user_data)
 
                     logger.error("User creation with RETURNING did not yield a row.")
                     raise SQLAlchemyError("User creation failed to return user data.")
                 except SQLAlchemyError as e:
-                    logger.error("❌ Database error during user creation: %s", str(e))
+                    logger.error("❌ Database error during user creation: %s", e)
                     raise
 
     async def update_password(self, email: str, hashed_password: str) -> None:
@@ -117,7 +117,7 @@ class UserService:
                     )
                     logger.info("Password updated in DB for %s", email)
                 except SQLAlchemyError as e:
-                    logger.error("❌ Database error updating password: %s", str(e))
+                    logger.error("❌ Database error updating password: %s", e)
                     raise
 
     async def store_email_verification_token(self, user_email: str, token: str, expires_at: datetime) -> None:
@@ -134,7 +134,7 @@ class UserService:
                     )
                     logger.info("Stored verification token for %s", user_email)
                 except SQLAlchemyError as e:
-                    logger.error("❌ Database error storing verification token: %s", str(e))
+                    logger.error("❌ Database error storing verification token: %s", e)
                     raise
 
     async def get_user_email_by_verification_token(self, token: str) -> Optional[str]:
@@ -152,7 +152,7 @@ class UserService:
                 record = result.first()
                 return record.user_email if record else None
             except SQLAlchemyError as e:
-                logger.error("❌ Database error fetching verification token: %s", str(e))
+                logger.error("❌ Database error fetching verification token: %s", e)
                 return None
 
     async def mark_user_as_verified(self, email: str) -> bool:
@@ -169,7 +169,7 @@ class UserService:
                         logger.warning("Attempted to mark non-existent user %s as verified.", email)
                         return False
                 except SQLAlchemyError as e:
-                    logger.error("❌ Database error marking user %s as verified: %s", email, str(e))
+                    logger.error("❌ Database error marking user %s as verified: %s", email, e)
                     raise
 
     async def delete_verification_token(self, token: str) -> None:
@@ -180,5 +180,5 @@ class UserService:
                     await session.execute(text("DELETE FROM email_verification_tokens WHERE token = :token"), {"token": token})
                     logger.info("Deleted verification token: %s", token)
                 except SQLAlchemyError as e:
-                    logger.error("❌ Database error deleting verification token: %s", str(e))
+                    logger.error("❌ Database error deleting verification token: %s", e)
                     pass

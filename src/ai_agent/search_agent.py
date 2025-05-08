@@ -95,7 +95,6 @@ class SearchAgent:
 
         try:
             # Fetch initial products using configured count
-            # Clamp fetch count to avoid excessive initial API calls
             initial_fetch_count = min(SEARCH_INITIAL_FETCH_COUNT, 50)
             logger.info("Fetching initial %d products...", initial_fetch_count)
             products = await self.serp_service.search_products(query, num_results=initial_fetch_count)
@@ -105,7 +104,6 @@ class SearchAgent:
                 return []
 
             # --- Selective Enrichment Strategy ---
-            # Enrich a subset of top candidates based on config
             enrichment_candidates_count = min(SEARCH_ENRICHMENT_COUNT, len(products))
             if enrichment_candidates_count > 0:
                 logger.info("🎯 Selecting top %d candidates for enrichment.", enrichment_candidates_count)
@@ -114,10 +112,9 @@ class SearchAgent:
                 enriched_map = {p.id: p for p in enriched_candidates}
             else:
                 logger.info("📋 Skipping enrichment based on configuration (SEARCH_ENRICHMENT_COUNT=0).")
-                enriched_map = {}  # No enrichment performed
+                enriched_map = {}
 
             # Create the final list for ranking: merge enriched + non-enriched products
-            # Rank based on ALL initially fetched products to consider full context
             products_for_ranking = [enriched_map.get(p.id, p) for p in products]
             # Limit the number of products actually sent to the ranking AI based on config
             products_to_rank = products_for_ranking[: min(SEARCH_RANKING_LIMIT, len(products_for_ranking))]
@@ -157,7 +154,6 @@ class SearchAgent:
         # Process enrichment in controlled batches
         logger.info("📋 Enriching %d products in batches of %d", len(products), effective_max_parallel)
         enriched_results = []
-        # Create batches from the input list
         batches = [products[i : i + effective_max_parallel] for i in range(0, len(products), effective_max_parallel)]
 
         for batch_idx, batch in enumerate(batches):
@@ -329,7 +325,7 @@ class SearchAgent:
                             found_in_cache_count += 1
                         except (ValueError, TypeError) as parse_err:
                             logger.warning("⚠️ Error applying cached rank data for %s: %s", cache_id_key, parse_err)
-                            product.relevance_score = None  # Nullify score if cached data is bad
+                            product.relevance_score = None
                     else:
                         logger.warning("⚠️ Product with cache key %s not found in current product set for ranking.", cache_id_key)
             else:

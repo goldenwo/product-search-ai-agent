@@ -60,7 +60,7 @@ async def login(request: Request, user: UserLogin, auth_service: AuthService = D
     Raises:
         HTTPException: If credentials are invalid or too many failed attempts
     """
-    return await auth_service.login(user)  # Use the new login method
+    return await auth_service.login(user)
 
 
 @router.post("/refresh")
@@ -122,13 +122,11 @@ async def verify_user_email(token: str, auth_service: AuthService = Depends(get_
     """Verify user's email address using the provided token."""
     try:
         await auth_service.verify_email_token(token)
-        # In a real frontend, you might redirect to a login page or success page.
         return {"message": "Email verified successfully. You can now log in."}
     except HTTPException as e:
         # Re-raise HTTPExceptions from auth_service directly
         raise e
     except Exception as e:
-        # Catch any other unexpected errors
         logger.error("Unexpected error during email verification: %s for token %s", e, token)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An error occurred during email verification.")
 
@@ -148,10 +146,9 @@ async def logout(
         if not access_jti:
             # This might happen if middleware failed or didn't run
             logger.warning("Logout attempt failed: JTI not found in request state for user %s.", user_email)
-            # Return success to the client as they intended to logout, but log the issue.
             return {"message": "Logout processed, but token details were missing."}
 
-        if not JWT_SECRET_KEY:  # Keep this check for safety
+        if not JWT_SECRET_KEY:
             logger.error("Logout attempt failed: JWT_SECRET_KEY is not configured.")
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Server configuration error for logout.")
 
@@ -168,9 +165,9 @@ async def logout(
         logger.info("User %s logged out. Access token JTI %s denylisted.", user_email, access_jti)
         return {"message": "Logout successful. Token has been invalidated."}
 
-    except HTTPException as http_exc:  # Re-raise HTTPExceptions
+    except HTTPException as http_exc:
         raise http_exc
     except Exception as e:
-        user_email = getattr(request.state, "user_email", "Unknown User")  # Get email for logging
+        user_email = getattr(request.state, "user_email", "Unknown User")
         logger.error("Error during logout for user %s: %s", user_email, e)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error processing logout.")

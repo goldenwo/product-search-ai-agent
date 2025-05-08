@@ -128,7 +128,7 @@ def key_func_user_or_ip(request: Request) -> str:
         # Log this fallback case, as it might indicate an issue or an intended public endpoint
         # Check if request.url exists and has path before logging
         path_info = request.url.path if hasattr(request, "url") and hasattr(request.url, "path") else "unknown path"
-        logger.warning(f"Rate limiting key (Fallback to IP): {key} for path {path_info}")
+        logger.warning("Rate limiting key (Fallback to IP): %s for path %s", key, path_info)
         return key
 
 

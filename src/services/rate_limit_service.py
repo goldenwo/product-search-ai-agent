@@ -18,16 +18,15 @@ class RateLimitService:
 
     async def check_failed_attempts(self, email: str) -> None:
         """Check if too many recent failed attempts."""
-        attempts = 0  # Default to 0 in case of issues with the method itself before try-except
+        attempts = 0
         try:
             attempts = await self.get_failed_attempts(email)
-        except Exception as e:  # Broad catch if get_failed_attempts itself fails unexpectedly
-            logger.error(f"Error calling get_failed_attempts for {email}: {e}")
-            # Depending on policy, you might allow login or deny. Denying is safer.
+        except Exception as e:
+            logger.error("Error calling get_failed_attempts for %s: %s", email, e)
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Error checking login attempts.")
 
         if attempts >= self.max_attempts:
-            logger.warning(f"Rate limit triggered for {email} after {attempts} attempts.")
+            logger.warning("Rate limit triggered for %s after %d attempts.", email, attempts)
             raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many failed attempts. Account locked for 30 minutes.")
 
     async def record_failed_login(self, email: str) -> None:
@@ -42,7 +41,7 @@ class RateLimitService:
             await self.redis.incr(key)
             await self.redis.expire(key, self.reset_after)  # Auto-expire after 30 minutes
         except RedisError as e:
-            logger.error("❌ Redis error recording failed login: %s", str(e))
+            logger.error("❌ Redis error recording failed login: %s", e)
 
     async def get_failed_attempts(self, email: str) -> int:
         """
@@ -61,7 +60,7 @@ class RateLimitService:
                 return int(attempts_raw)  # attempts_raw is bytes, decode if necessary or int() handles it
             return 0  # Key not found or empty
         except RedisError as e:
-            logger.error("❌ Redis error getting failed attempts for %s: %s", email, str(e))
+            logger.error("❌ Redis error getting failed attempts for %s: %s", email, e)
             return 0  # Return 0 on Redis error as per test expectation
         except ValueError as e:  # If int() conversion fails for some reason
             logger.error("❌ Error converting stored failed attempts to int for %s: %s. Value: '%s'", email, e, attempts_raw)

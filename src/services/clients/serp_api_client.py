@@ -86,13 +86,13 @@ class SerpAPIClient:
                     return shopping_results
 
         except aiohttp.ClientError as e:
-            logger.error("❌ SERP API request failed: %s", str(e))
-            raise SerpAPIException(f"SERP API request failed: {str(e)}", "serp", 500) from e
+            logger.error("❌ SERP API request failed: %s", e)
+            raise SerpAPIException(f"SERP API request failed: {e}", "serp", 500) from e
 
         except (KeyError, ValueError, TypeError) as e:
-            logger.error("❌ Error parsing SERP API response: %s", str(e))
-            raise SerpAPIException(f"Error parsing SERP API response: {str(e)}", "serp", 500) from e
+            logger.error("❌ Error parsing SERP API response: %s", e)
+            raise SerpAPIException(f"Error parsing SERP API response: {e}", "serp", 500) from e
 
         except Exception as e:
-            logger.error("❌ Unexpected error in SERP API service: %s", str(e))
-            raise SerpAPIException(f"Unexpected error: {str(e)}", "serp", 500) from e
+            logger.error("❌ Unexpected error in SERP API service: %s", e)
+            raise SerpAPIException(f"Unexpected error: {e}", "serp", 500) from e

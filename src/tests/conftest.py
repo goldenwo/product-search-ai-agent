@@ -88,7 +88,7 @@ def set_test_environment(session_monkeypatch):
     # from src.utils import config
     # import importlib
     # importlib.reload(config)
-    logger.info(f"DATABASE_URL set to: {os.getenv('DATABASE_URL')}")
+    logger.info("DATABASE_URL set to: %s", os.getenv("DATABASE_URL"))
 
 
 @pytest.fixture(scope="function", autouse=True)
@@ -99,17 +99,8 @@ def mock_limiter_storage_for_tests(session_monkeypatch):
     """
     logger.info("Patching global limiter storage with MemoryStorage for test session.")
     memory_storage_instance = MemoryStorage()
-    # Patch the 'storage' attribute of the INNER limiter object
-    # The SlowAPI Limiter instance often holds the actual rate limiter from the 'limits' library
-    # in an attribute like '_limiter' or 'limiter'. We need to inspect the SlowAPI Limiter object
-    # or its source to be sure, but 'limiter.limiter.storage' is a common pattern if it wraps
-    # another limiter.
-    # If 'limiter.limiter' doesn't exist, we might need to re-initialize the SlowAPI limiter
-    # with a new storage_options or a direct MemoryStorage instance if its API allows.
-
-    # Let's try patching what is typically the path to the actual storage backend.
-    # The SlowAPI.Limiter itself might not have a direct .storage attribute for setting.
-    # It often has a .limiter attribute which is the instance from the 'python-limits' library.
+    # Attempt to patch the 'storage' attribute of the inner limiter object.
+    # SlowAPI.Limiter often wraps an instance from the 'limits' library.
     if hasattr(limiter, "limiter") and hasattr(limiter.limiter, "storage"):
         session_monkeypatch.setattr(limiter.limiter, "storage", memory_storage_instance)
         logger.info("Patched limiter.limiter.storage with MemoryStorage instance.")
@@ -117,18 +108,8 @@ def mock_limiter_storage_for_tests(session_monkeypatch):
         session_monkeypatch.setattr(limiter._limiter, "storage", memory_storage_instance)
         logger.info("Patched limiter._limiter.storage with MemoryStorage instance.")
     else:
-        # Fallback or error if the structure isn't as expected.
         # This might happen if SlowAPI changes its internal structure.
-        # A more robust way might be to re-initialize the limiter with a memory storage URI
-        # if the current `limiter` object in dependencies allows for such re-configuration,
-        # or by patching the storage_uri before the limiter is first accessed/initialized.
-        logger.error(
-            "Could not find the correct path to patch limiter storage. "
-            "The internal structure of SlowAPI.Limiter might have changed. "
-            "Attempting to set storage_uri and re-initialize (conceptual)."
-        )
-        # This conceptual part is tricky to do post-initialization without re-creating the limiter.
-        # For now, we'll raise an error if the common paths aren't found.
+        logger.error("Could not find the correct path to patch limiter storage. The internal structure of SlowAPI.Limiter might have changed.")
         raise AttributeError("Could not patch limiter storage. Check SlowAPI Limiter internal structure.")
 
 
@@ -166,7 +147,7 @@ async def test_engine(set_test_environment):
                     await conn.run_sync(Base.metadata.drop_all)
                     logger.info("test_engine: Schema dropped.")
             except Exception as e:
-                logger.error(f"test_engine: Error dropping schema: {e}")
+                logger.error("test_engine: Error dropping schema: %s", e)
 
             # Dispose Engine
             try:
@@ -174,7 +155,7 @@ async def test_engine(set_test_environment):
                 await engine.dispose()
                 logger.info("test_engine: Engine disposed.")
             except Exception as e:
-                logger.error(f"test_engine: Error disposing engine: {e}")
+                logger.error("test_engine: Error disposing engine: %s", e)
         logger.info("test_engine: Teardown finished.")
 
 
