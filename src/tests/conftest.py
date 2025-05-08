@@ -91,7 +91,7 @@ def set_test_environment(session_monkeypatch):
     logger.info(f"DATABASE_URL set to: {os.getenv('DATABASE_URL')}")
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="function", autouse=True)
 def mock_limiter_storage_for_tests(session_monkeypatch):
     """
     Patches the global limiter's storage to use MemoryStorage for the test session.

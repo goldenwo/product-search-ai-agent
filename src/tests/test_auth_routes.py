@@ -121,6 +121,49 @@ async def test_register_email_exists(mock_auth_service: MagicMock, app: FastAPI)
     del app.dependency_overrides[get_auth_service]
 
 
+@pytest.mark.asyncio
+async def test_register_rate_limit(mock_auth_service: MagicMock, app: FastAPI):
+    """Test rate limiting on the registration endpoint."""
+    # The /auth/register endpoint has a limit of "10/hour;5/minute"
+    # We will test the 5/minute limit.
+    # The mock_limiter_storage_for_tests fixture ensures MemoryStorage is used.
+
+    app.dependency_overrides[get_auth_service] = lambda: mock_auth_service
+
+    # Configure mock_auth_service for repeated calls during the rate limit test
+    # We need to allow registration attempts to proceed up to the service call
+    mock_auth_service.is_valid_email.return_value = True
+    mock_auth_service.is_strong_password.return_value = True
+    mock_auth_service.get_user = AsyncMock(return_value=None)  # Assume email doesn't exist for simplicity
+    # We don't need create_user/create_tokens to succeed, just need the request to pass initial validation
+
+    user_data = {"email": "ratelimit@example.com", "username": "limit_tester", "password": "ValidPass123"}
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Make 5 requests - these should succeed (or hit the mocked service)
+        for i in range(5):
+            print(f"Rate limit test: Making request {i + 1}/6")
+            response: HttpxResponse = await client.post(
+                "/auth/register", json={**user_data, "email": f"ratelimit{i}@example.com"}
+            )  # Unique email per request
+            # We expect 200 (mocked success) or potentially 400/500 if mock setup leads there, but NOT 429 yet.
+            assert response.status_code != 429, f"Request {i + 1} unexpectedly hit rate limit."
+            # Reset mocks that should be called once per request if needed
+            mock_auth_service.get_user.reset_mock()
+            mock_auth_service.is_valid_email.reset_mock()
+            mock_auth_service.is_strong_password.reset_mock()
+
+        # Make the 6th request - this should trigger the 429 Rate Limit Exceeded
+        print("Rate limit test: Making request 6/6 (Expecting 429)")
+        response_limit: HttpxResponse = await client.post("/auth/register", json={**user_data, "email": "ratelimit5@example.com"})
+
+        assert response_limit.status_code == 429
+        assert "Rate limit exceeded" in response_limit.text
+
+    del app.dependency_overrides[get_auth_service]
+
+
 # --- Login Tests ---
 @pytest.mark.asyncio
 async def test_login_success(mock_auth_service: MagicMock, app: FastAPI):
