@@ -1,6 +1,9 @@
 import asyncio
 import logging
 import os
+
+# import gc # Removed gc import
+from typing import Optional
 from unittest.mock import AsyncMock, MagicMock
 
 from fastapi import FastAPI
@@ -9,7 +12,7 @@ from fastapi import FastAPI
 from limits.storage import MemoryStorage
 import pytest
 import pytest_asyncio
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 # Import the global limiter instance to patch its storage
 from src.dependencies import limiter
@@ -47,7 +50,7 @@ def event_loop(request):
 
 
 # Determine the test database URL
-TEST_DATABASE_URL = "sqlite+aiosqlite:///./test.db"
+TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"  # Changed to in-memory
 # Ensure this path is correct to import your Base and init_db logic
 # from src.database.setup import Base, init_db # Adjust if you have a central db setup
 
@@ -132,106 +135,61 @@ def mock_limiter_storage_for_tests(session_monkeypatch):
 # --- Database Fixtures ---
 
 
-@pytest.fixture(scope="session")
-def db_engine(set_test_environment):
-    """
-    Synchronously creates the test database engine once per session.
-    Ensures the test database file is removed before starting if it exists.
-    Yields the engine instance. Disposal is handled by _manage_db_engine_lifecycle.
-    """
-    db_file_path = None
-    if TEST_DATABASE_URL.startswith("sqlite+") and "memory" not in TEST_DATABASE_URL:
-        db_file_path = TEST_DATABASE_URL.split("///")[-1]
-        if os.path.exists(db_file_path):
-            try:
-                logger.info(f"Attempting to remove existing test database file: {db_file_path}")
-                os.remove(db_file_path)
-                logger.info(f"Successfully removed existing test database file: {db_file_path}")
-            except OSError as e:
-                logger.error(f"Error removing existing test database file {db_file_path} during setup: {e}. Tests may fail or be unreliable.")
-
-    # Engine creation itself is synchronous
-    engine = create_async_engine(TEST_DATABASE_URL)
-    logger.info(f"Database engine created for {TEST_DATABASE_URL}")
-
-    yield engine  # Provide the engine instance
-
-    # Teardown: File removal (Disposal handled separately)
-    logger.info("db_engine fixture teardown: File removal check.")
-    # await engine.dispose() # REMOVED - Handled by _manage_db_engine_lifecycle
-
-    if db_file_path and os.path.exists(db_file_path):
-        try:
-            logger.info(f"Attempting final removal of test database file {db_file_path} post-session.")
-            os.remove(db_file_path)
-            logger.info(f"Test database file {db_file_path} removed after session.")
-        except OSError as e:
-            logger.warning(f"Warning: Could not remove test database file {db_file_path} post-session: {e}. It might be locked.")
-
-
-@pytest_asyncio.fixture(scope="session", autouse=True)
-async def _manage_db_engine_lifecycle(db_engine: AsyncEngine):
-    """Automatically disposes the session-scoped engine at the end of the test session."""
-    yield  # Fixture does setup/teardown via dependency and finally block
-    # Teardown: Dispose the engine asynchronously
-    logger.info(f"_manage_db_engine_lifecycle: Disposing engine {db_engine}")
-    try:
-        await db_engine.dispose()
-        logger.info("_manage_db_engine_lifecycle: Engine disposed successfully.")
-    except Exception as e:
-        logger.error(f"_manage_db_engine_lifecycle: Error disposing engine: {e}")
-
-
+# Fixture to provide an initialized in-memory engine for each test function
 @pytest_asyncio.fixture(scope="function")
-async def initialize_schema(db_engine: AsyncEngine):
+async def test_engine(set_test_environment):
     """
-    Initializes the database schema at the start of each function/test and drops it at the end.
+    Function-scoped fixture providing an IN-MEMORY engine with schema created.
+    Handles creation, schema setup/teardown, and disposal for each test.
     """
+    engine: Optional[AsyncEngine] = None
     try:
-        # Attempt to drop all tables first to ensure a clean state for each test
-        try:
-            async with db_engine.begin() as conn:
-                logger.info("initialize_schema: Attempting pre-emptive drop_all...")
-                await conn.run_sync(Base.metadata.drop_all)
-                logger.info("initialize_schema: Pre-emptive drop_all completed.")
-        except Exception as e:
-            logger.warning(f"initialize_schema: Warning during pre-emptive drop_all: {e}")
+        # Create engine (using in-memory URL)
+        engine = create_async_engine(TEST_DATABASE_URL)
+        logger.info("test_engine: In-memory engine created for test.")
 
-        async with db_engine.begin() as conn:
-            logger.info("Initializing schema via initialize_schema fixture...")
+        # Create schema
+        async with engine.begin() as conn:
+            logger.info("test_engine: Creating schema...")
             await conn.run_sync(Base.metadata.create_all)
-            logger.info("Database schema created.")
-        yield  # Ready for tests
+            logger.info("test_engine: Schema created.")
+
+        yield engine  # Test runs here with the engine
+
     finally:
-        # Teardown: Drop tables and dispose engine
-        logger.info("Dropping schema via initialize_schema fixture...")
-        try:
-            async with db_engine.begin() as conn:
-                await conn.run_sync(Base.metadata.drop_all)
-            logger.info("Successfully dropped all tables.")
-        except Exception as e:
-            logger.error(f"Error dropping tables: {e}")
+        # Teardown phase
+        if engine:
+            # Drop Schema
+            try:
+                async with engine.begin() as conn:
+                    logger.info("test_engine: Dropping schema...")
+                    await conn.run_sync(Base.metadata.drop_all)
+                    logger.info("test_engine: Schema dropped.")
+            except Exception as e:
+                logger.error(f"test_engine: Error dropping schema: {e}")
 
-        # logger.info(f"Disposing engine via initialize_schema fixture...") # Removed
-        # await db_engine.dispose() # Removed
+            # Dispose Engine
+            try:
+                logger.info("test_engine: Disposing engine...")
+                await engine.dispose()
+                logger.info("test_engine: Engine disposed.")
+            except Exception as e:
+                logger.error(f"test_engine: Error disposing engine: {e}")
+        logger.info("test_engine: Teardown finished.")
 
 
-@pytest_asyncio.fixture(scope="function")
-async def db_session_for_test(db_engine: AsyncEngine, initialize_schema):  # Depends on engine AND schema being ready
-    """
-    Provides a database session for a single test function.
-    Ensures the session is rolled back after the test.
-    Depends on db_engine and initialize_schema.
-    """
-    async_session_factory = async_sessionmaker(bind=db_engine, class_=AsyncSession, expire_on_commit=False)
-    async with async_session_factory() as session:
-        try:
-            yield session
-        except Exception:
-            await session.rollback()
-            raise
-        finally:
-            await session.close()
+# Optional: Fixture to provide a session from the test engine if needed directly
+# @pytest_asyncio.fixture(scope="function")
+# async def test_db_session(test_engine: AsyncEngine):
+#     async_session_factory = async_sessionmaker(bind=test_engine, class_=AsyncSession, expire_on_commit=False)
+#     async with async_session_factory() as session:
+#         try:
+#             yield session
+#         except Exception:
+#             await session.rollback()
+#             raise
+#         finally:
+#             await session.close()
 
 
 # --- Application and Client Fixtures ---

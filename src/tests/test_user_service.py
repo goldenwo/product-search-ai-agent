@@ -8,7 +8,7 @@ from passlib.hash import bcrypt
 from pydantic import ValidationError
 import pytest
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from src.models.user import UserCreate, UserInDB
 from src.services.user_service import UserService
@@ -233,14 +233,14 @@ async def test_update_password_db_error(mocked_user_service):
     mock_session.begin().__aexit__.assert_called_once()  # Transaction context should still exit
 
 
-# --- Integration Tests (using real test DB via db_session_for_test) ---
+# --- Integration Tests (using real test DB via test_engine) ---
 
 
 @pytest.mark.asyncio
-async def test_integration_create_and_get_user(db_engine: AsyncEngine, initialize_schema, db_session_for_test: AsyncSession):
+async def test_integration_create_and_get_user(test_engine: AsyncEngine):
     """Test creating a new user and retrieving it using the test database."""
-    # Pass the test engine
-    user_service = UserService(engine=db_engine)
+    # Instantiate UserService WITH the test engine
+    user_service = UserService(engine=test_engine)
 
     user_data = UserCreate(email="integ_test@example.com", username="integ_user", password="Password12345")
     hashed_password = get_test_password_hash(user_data.password)
@@ -262,19 +262,19 @@ async def test_integration_create_and_get_user(db_engine: AsyncEngine, initializ
 
 
 @pytest.mark.asyncio
-async def test_integration_get_non_existent_user(db_engine: AsyncEngine, initialize_schema, db_session_for_test: AsyncSession):
+async def test_integration_get_non_existent_user(test_engine: AsyncEngine):
     """Test retrieving a non-existent user from the test database."""
-    # Pass the test engine
-    user_service = UserService(engine=db_engine)
+    # Instantiate UserService WITH the test engine
+    user_service = UserService(engine=test_engine)
     user = await user_service.get_user("no_such_user@example.com")
     assert user is None
 
 
 @pytest.mark.asyncio
-async def test_integration_update_password(db_engine: AsyncEngine, initialize_schema, db_session_for_test: AsyncSession):
+async def test_integration_update_password(test_engine: AsyncEngine):
     """Test updating a user's password in the test database."""
-    # Pass the test engine
-    user_service = UserService(engine=db_engine)
+    # Instantiate UserService WITH the test engine
+    user_service = UserService(engine=test_engine)
     email = "update_pass@example.com"
     username = "update_pass_user"
     old_password_plain = "OldPassword123"
@@ -291,10 +291,10 @@ async def test_integration_update_password(db_engine: AsyncEngine, initialize_sc
 
 
 @pytest.mark.asyncio
-async def test_integration_mark_user_as_verified(db_engine: AsyncEngine, initialize_schema, db_session_for_test: AsyncSession):
+async def test_integration_mark_user_as_verified(test_engine: AsyncEngine):
     """Test marking a user as verified in the test database."""
-    # Pass the test engine
-    user_service = UserService(engine=db_engine)
+    # Instantiate UserService WITH the test engine
+    user_service = UserService(engine=test_engine)
     email = "verify_user@example.com"
     user_to_create = UserCreate(email=email, username="verify_me", password="Password123")
     hashed_password = get_test_password_hash(user_to_create.password)
@@ -310,12 +310,12 @@ async def test_integration_mark_user_as_verified(db_engine: AsyncEngine, initial
 
 
 @pytest.mark.asyncio
-async def test_integration_verification_token_workflow(db_engine: AsyncEngine, initialize_schema, db_session_for_test: AsyncSession):
+async def test_integration_verification_token_workflow(test_engine: AsyncEngine):
     """Test the full email verification token lifecycle with the test database."""
     from datetime import datetime, timedelta, timezone
 
-    # Pass the test engine
-    user_service = UserService(engine=db_engine)
+    # Instantiate UserService WITH the test engine
+    user_service = UserService(engine=test_engine)
     email = "token_user@example.com"
     token_str = "test_verification_token_123"
     user_to_create = UserCreate(email=email, username="token_username", password="TokenPass123")
