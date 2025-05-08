@@ -3,7 +3,8 @@
 from datetime import datetime, timedelta, timezone
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
-from fastapi import FastAPI
+from fastapi import FastAPI, status
+from fastapi.exceptions import HTTPException
 from httpx import ASGITransport, AsyncClient
 from httpx import Response as HttpxResponse
 
@@ -16,7 +17,12 @@ import pytest
 # from starlette.requests import Request as StarletteRequest # To avoid conflict with FastAPI's Request
 # from starlette.responses import Response as StarletteResponse # To avoid conflict with FastAPI's Response
 from src.dependencies import get_auth_service  # To override this dependency
-from src.models.user import Token, UserCreate, UserInDB  # For type hinting and mock return values
+from src.models.user import (
+    Token,
+    UserCreate,
+    UserInDB,
+    UserLogin,  # Added UserLogin import
+)
 from src.services.auth_service import AuthService  # For spec in MagicMock
 from src.services.email_service import EmailService  # For spec in MagicMock
 
@@ -84,6 +90,7 @@ async def test_register_success(mock_auth_service: MagicMock, app: FastAPI):
         assert called_arg.username == user_data["username"]
         assert called_arg.password == user_data["password"]
         mock_auth_service.create_tokens.assert_called_once_with(mock_created_user.email)
+
         response_data = response.json()
         assert response_data["access_token"] == "test_access_token"
         assert response_data["refresh_token"] == "test_refresh_token"
@@ -136,7 +143,30 @@ async def test_login_success(mock_auth_service: MagicMock, app: FastAPI):
     del app.dependency_overrides[get_auth_service]
 
 
-# Add tests for login failure (wrong credentials, user locked out - requires mocking rate_limit interactions within AuthService mock)
+@pytest.mark.asyncio
+async def test_login_unverified_user(mock_auth_service: MagicMock, app: FastAPI):
+    """Test login failure when user email is not verified."""
+    app.dependency_overrides[get_auth_service] = lambda: mock_auth_service
+
+    # Simulate AuthService.login raising the 403 Forbidden due to unverified email
+    mock_auth_service.login = AsyncMock(
+        side_effect=HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Email not verified. Please check your inbox for a verification link.",
+        )
+    )
+
+    login_data = {"email": "unverified@example.com", "password": "password123"}
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response: HttpxResponse = await client.post("/auth/login", json=login_data)
+
+        assert response.status_code == 403
+        assert "Email not verified" in response.json()["detail"]
+        mock_auth_service.login.assert_called_once_with(UserLogin(**login_data))  # Ensure service method was called
+
+    del app.dependency_overrides[get_auth_service]
 
 
 # --- Refresh Token Tests ---
@@ -271,6 +301,32 @@ async def test_verify_email_success(mock_auth_service: MagicMock, app: FastAPI):
         assert response.status_code == 200
         mock_auth_service.verify_email_token.assert_called_once_with(verification_token)
         assert response.json() == {"message": "Email verified successfully. You can now log in."}
+
+    del app.dependency_overrides[get_auth_service]
+
+
+@pytest.mark.asyncio
+async def test_verify_email_invalid_token(mock_auth_service: MagicMock, app: FastAPI):
+    """Test email verification with an invalid or expired token."""
+    app.dependency_overrides[get_auth_service] = lambda: mock_auth_service
+
+    # Simulate AuthService.verify_email_token raising 400 for an invalid token
+    mock_auth_service.verify_email_token = AsyncMock(
+        side_effect=HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired verification token.",
+        )
+    )
+
+    invalid_token = "this_token_is_not_valid"
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response: HttpxResponse = await client.get(f"/auth/verify-email?token={invalid_token}")
+
+        assert response.status_code == 400
+        assert "Invalid or expired" in response.json()["detail"]
+        mock_auth_service.verify_email_token.assert_called_once_with(invalid_token)
 
     del app.dependency_overrides[get_auth_service]
 

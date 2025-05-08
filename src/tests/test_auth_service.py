@@ -1,11 +1,12 @@
 """Test the AuthService class."""
 
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from fastapi import HTTPException
+from fastapi import HTTPException, status
 import jwt
 import pytest
+from redis.exceptions import RedisError
 
 from src.models.user import UserCreate, UserInDB, UserLogin
 from src.services.auth_service import AuthService
@@ -195,16 +196,45 @@ async def test_login_success_clears_attempts(auth_service, mock_user):  # pylint
 
 
 @pytest.mark.asyncio
+async def test_authenticate_user_unverified(auth_service):  # pylint: disable=redefined-outer-name
+    """Test authenticate_user denies login for unverified user."""
+    service, mock_user_service, _, _ = auth_service
+
+    # Create a mock user that is explicitly NOT verified
+    unverified_user = UserInDB(
+        email="unverified@example.com", username="unverified_user", hashed_password=service.get_password_hash("password123"), is_verified=False
+    )
+
+    # Mock get_user to return this unverified user
+    mock_user_service.get_user = AsyncMock(return_value=unverified_user)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await service.authenticate_user("unverified@example.com", "password123")
+
+    assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+    assert "Email not verified" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
 async def test_create_user(auth_service, mock_user):  # pylint: disable=redefined-outer-name
     """Test user creation."""
-    service, mock_user_service, _, _ = auth_service
+    # Unpack mocks from the auth_service fixture
+    service, mock_user_service, _, mock_email_service = auth_service
     user_data = UserCreate(email=mock_user.email, username=mock_user.username, password="password123")
     mock_user_service.create_user = AsyncMock(return_value=mock_user)
 
-    created_user = await service.create_user(user_data)
-    assert created_user.email == user_data.email
-    assert created_user.username == user_data.username
-    assert created_user.hashed_password != user_data.password  # Password should be hashed
+    # Patch the internal method on the specific 'service' instance
+    with patch.object(service, "_store_email_verification_token", new_callable=AsyncMock) as mock_store_token:
+        created_user = await service.create_user(user_data)
+
+        assert created_user.email == user_data.email
+        assert created_user.username == user_data.username
+        assert created_user.hashed_password != user_data.password  # Password should be hashed
+
+        # Check internal call was made using the patch
+        mock_store_token.assert_called_once()
+        # Check dependency call was made
+        mock_email_service.send_verification_email.assert_called_once()
 
 
 def test_verify_token(auth_service):  # pylint: disable=redefined-outer-name
@@ -400,3 +430,151 @@ async def test_token_expiry_times(auth_service):  # pylint: disable=redefined-ou
     now = datetime.now(timezone.utc).timestamp()
     assert access_payload["exp"] - now <= 30 * 60  # 30 minutes
     assert refresh_payload["exp"] - now <= 7 * 24 * 60 * 60  # 7 days
+
+
+# --- Email Verification Tests ---
+@pytest.mark.asyncio
+async def test_verify_email_token_success(auth_service, mock_user):  # pylint: disable=redefined-outer-name
+    """Test successful email verification via token."""
+    service, mock_user_service, _, _ = auth_service
+    token = "valid_test_token"
+    email = mock_user.email
+
+    # Mock the user service calls
+    mock_user_service.get_user_email_by_verification_token = AsyncMock(return_value=email)
+    mock_user_service.get_user = AsyncMock(return_value=mock_user)
+    mock_user_service.mark_user_as_verified = AsyncMock(return_value=True)
+    mock_user_service.delete_verification_token = AsyncMock()
+
+    result = await service.verify_email_token(token)
+
+    assert result is True
+    mock_user_service.get_user_email_by_verification_token.assert_called_once_with(token)
+    mock_user_service.get_user.assert_called_once_with(email)
+    mock_user_service.mark_user_as_verified.assert_called_once_with(email)
+    mock_user_service.delete_verification_token.assert_called_once_with(token)
+
+
+@pytest.mark.asyncio
+async def test_verify_email_token_invalid_or_expired(auth_service):  # pylint: disable=redefined-outer-name
+    """Test email verification with an invalid or expired token."""
+    service, mock_user_service, _, _ = auth_service
+    token = "invalid_or_expired_token"
+
+    # Mock token lookup to return None
+    mock_user_service.get_user_email_by_verification_token = AsyncMock(return_value=None)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await service.verify_email_token(token)
+
+    assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+    assert "Invalid or expired verification token" in exc_info.value.detail
+    mock_user_service.get_user_email_by_verification_token.assert_called_once_with(token)
+    mock_user_service.get_user.assert_not_called()
+    mock_user_service.mark_user_as_verified.assert_not_called()
+    mock_user_service.delete_verification_token.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_verify_email_token_user_not_found(auth_service):  # pylint: disable=redefined-outer-name
+    """Test email verification when token is valid but user doesn't exist."""
+    service, mock_user_service, _, _ = auth_service
+    token = "valid_token_for_deleted_user"
+    email = "deleted_user@example.com"
+
+    # Mock token lookup success, but user lookup failure
+    mock_user_service.get_user_email_by_verification_token = AsyncMock(return_value=email)
+    mock_user_service.get_user = AsyncMock(return_value=None)
+    mock_user_service.delete_verification_token = AsyncMock()  # Still expect deletion
+
+    with pytest.raises(HTTPException) as exc_info:
+        await service.verify_email_token(token)
+
+    assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+    assert "User not found" in exc_info.value.detail
+    mock_user_service.get_user_email_by_verification_token.assert_called_once_with(token)
+    mock_user_service.get_user.assert_called_once_with(email)
+    mock_user_service.mark_user_as_verified.assert_not_called()
+    mock_user_service.delete_verification_token.assert_called_once_with(token)
+
+
+@pytest.mark.asyncio
+async def test_verify_email_token_mark_failed(auth_service, mock_user):  # pylint: disable=redefined-outer-name
+    """Test email verification when marking user as verified fails."""
+    service, mock_user_service, _, _ = auth_service
+    token = "valid_token_mark_fail"
+    email = mock_user.email
+
+    # Mock earlier steps success, but mark_user_as_verified returns False
+    mock_user_service.get_user_email_by_verification_token = AsyncMock(return_value=email)
+    mock_user_service.get_user = AsyncMock(return_value=mock_user)
+    mock_user_service.mark_user_as_verified = AsyncMock(return_value=False)
+    mock_user_service.delete_verification_token = AsyncMock()  # Still expect deletion
+
+    with pytest.raises(HTTPException) as exc_info:
+        await service.verify_email_token(token)
+
+    assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    assert "Could not verify email due to a server issue" in exc_info.value.detail
+    mock_user_service.get_user_email_by_verification_token.assert_called_once_with(token)
+    mock_user_service.get_user.assert_called_once_with(email)
+    mock_user_service.mark_user_as_verified.assert_called_once_with(email)
+    mock_user_service.delete_verification_token.assert_called_once_with(token)
+
+
+# --- End Email Verification Tests ---
+
+
+# --- JTI Denylist Tests ---
+@pytest.mark.asyncio
+async def test_add_jti_to_denylist(auth_service):  # pylint: disable=redefined-outer-name
+    """Test adding a JTI to the denylist."""
+    service, _, mock_redis_service, _ = auth_service
+    jti = "test_jti_to_denylist"
+    ttl = 3600
+
+    await service.add_jti_to_denylist(jti, ttl)
+
+    mock_redis_service.set_cache.assert_called_once_with(f"denylist_jti:{jti}", "revoked", ttl=ttl)
+
+
+@pytest.mark.asyncio
+async def test_is_jti_denylisted_true(auth_service):  # pylint: disable=redefined-outer-name
+    """Test checking a JTI that IS in the denylist."""
+    service, _, mock_redis_service, _ = auth_service
+    jti = "denylisted_jti"
+    mock_redis_service.get_cache = AsyncMock(return_value="revoked")  # Simulate JTI found in cache
+
+    is_denylisted = await service.is_jti_denylisted(jti)
+
+    assert is_denylisted is True
+    mock_redis_service.get_cache.assert_called_once_with(f"denylist_jti:{jti}")
+
+
+@pytest.mark.asyncio
+async def test_is_jti_denylisted_false(auth_service):  # pylint: disable=redefined-outer-name
+    """Test checking a JTI that is NOT in the denylist."""
+    service, _, mock_redis_service, _ = auth_service
+    jti = "clean_jti"
+    mock_redis_service.get_cache = AsyncMock(return_value=None)  # Simulate JTI not found
+
+    is_denylisted = await service.is_jti_denylisted(jti)
+
+    assert is_denylisted is False
+    mock_redis_service.get_cache.assert_called_once_with(f"denylist_jti:{jti}")
+
+
+@pytest.mark.asyncio
+async def test_is_jti_denylisted_redis_error(auth_service):  # pylint: disable=redefined-outer-name
+    """Test checking JTI when Redis fails (should return False)."""
+    service, _, mock_redis_service, _ = auth_service
+    jti = "check_with_error_jti"
+    mock_redis_service.get_cache = AsyncMock(side_effect=RedisError("Connection failed"))
+
+    is_denylisted = await service.is_jti_denylisted(jti)
+
+    assert is_denylisted is False  # Should fail safe
+    mock_redis_service.get_cache.assert_called_once_with(f"denylist_jti:{jti}")
+
+
+# --- End JTI Denylist Tests ---
