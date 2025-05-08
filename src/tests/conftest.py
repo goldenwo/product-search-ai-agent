@@ -188,6 +188,15 @@ async def initialize_schema(db_engine: AsyncEngine):
     Initializes the database schema at the start of each function/test and drops it at the end.
     """
     try:
+        # Attempt to drop all tables first to ensure a clean state for each test
+        try:
+            async with db_engine.begin() as conn:
+                logger.info("initialize_schema: Attempting pre-emptive drop_all...")
+                await conn.run_sync(Base.metadata.drop_all)
+                logger.info("initialize_schema: Pre-emptive drop_all completed.")
+        except Exception as e:
+            logger.warning(f"initialize_schema: Warning during pre-emptive drop_all: {e}")
+
         async with db_engine.begin() as conn:
             logger.info("Initializing schema via initialize_schema fixture...")
             await conn.run_sync(Base.metadata.create_all)
