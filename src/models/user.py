@@ -42,6 +42,7 @@ class UserInDB(BaseModel):
         email: User's email address
         username: User's username
         hashed_password: Bcrypt hashed password
+        is_verified: Indicates whether the user's email is verified
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -49,6 +50,7 @@ class UserInDB(BaseModel):
     email: EmailStr
     username: str
     hashed_password: str
+    is_verified: bool = False
 
 
 class Token(BaseModel):

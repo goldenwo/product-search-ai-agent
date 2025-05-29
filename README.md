@@ -25,8 +25,20 @@ cd product-search-ai-agent
 ## Set Up Virtual Environment & Install Dependencies
 
 ```bash
-pipenv install
+pipenv install --dev # Install both prod and dev dependencies
 ```
+
+### **Optional: Install Playwright Browsers**
+
+If you intend to use the product enrichment feature with the headless browser fallback enabled (`ENRICHMENT_USE_HEADLESS_FALLBACK=true` in your environment), you need to install the necessary browser binaries for Playwright:
+
+```bash
+playwright install # Installs default browsers (chromium, firefox, webkit)
+# Or install specific browsers, e.g.:
+# playwright install chromium
+```
+
+This step is **only required** if the fallback is enabled. The application will function without it if the fallback is disabled or not used.
 
 ## Activate the Virtual Environment
 

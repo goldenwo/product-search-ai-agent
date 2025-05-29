@@ -2,22 +2,25 @@
 
 import re
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPBearer
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+import redis
+from slowapi.errors import RateLimitExceeded
 
-from src.ai_agent.product_fetcher import ProductFetcher
+from src.ai_agent.search_agent import SearchAgent
+from src.dependencies import get_auth_service, get_redis_service, get_search_agent, key_func_user_or_ip, limiter
 from src.services.auth_service import AuthService
 from src.services.redis_service import RedisService
-from src.utils import FAISSIndexError, OpenAIServiceError, StoreAPIError, logger
+from src.utils import OpenAIServiceError, SerpAPIException, logger
+from src.utils.config import API_RATE_LIMIT_USER, CACHE_SEARCH_RESULTS_TTL
 
 router = APIRouter()
-redis_cache = RedisService()
-auth_service = AuthService()
 security = HTTPBearer()
 
 
 @router.get("/")
-def health_check():
+@limiter.limit("30/minute")
+async def health_check(request: Request):
     """
     Health check endpoint to verify API status.
 
@@ -28,34 +31,40 @@ def health_check():
 
 
 @router.get("/search")
-async def search(query: str, auth=Depends(security)):
+@limiter.limit(API_RATE_LIMIT_USER, key_func=key_func_user_or_ip)
+async def search(
+    request: Request,
+    query: str,
+    auth: HTTPAuthorizationCredentials = Depends(security),
+    auth_service: AuthService = Depends(get_auth_service),
+    redis_cache: RedisService = Depends(get_redis_service),
+    search_agent: SearchAgent = Depends(get_search_agent),
+):
     """
-    AI-powered product search with authentication and caching.
+    AI-powered product search endpoint.
+
+    Requires authentication. Performs search, enrichment, and ranking.
+    Handles caching of final search results.
 
     Args:
+        request: FastAPI request object (used by rate limiter).
         query: Search query string
         auth: JWT bearer token for authentication
 
     Returns:
         dict: Search results with metadata
-            - query: Original search query
-            - cached: Whether results came from cache
-            - results: List of matched products
-            - user: Email of authenticated user
 
     Raises:
-        HTTPException:
-            - 401: Invalid authentication token
-            - 400: Invalid search query
-        OpenAIServiceError: If AI service fails
-        FAISSIndexError: If vector search fails
-        StoreAPIError: If store API calls fail
+        HTTPException: 401 (Auth), 400 (Bad Query), 429 (Rate Limit), 500/503 (Service Error)
     """
-    # Verify token and get user
+    email = ""
     try:
+        # Verify JWT token and get user email
         email = auth_service.verify_token(auth.credentials)
+        logger.info("Authenticated search request for user: %s", email)
     except HTTPException as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from exc
+        logger.warning("Search authentication failed: %s", exc.detail)
+        raise
 
     # Sanitize input
     query = re.sub(r"[<>]", "", query.strip())
@@ -65,25 +74,58 @@ async def search(query: str, auth=Depends(security)):
     if len(query) > 500:
         return {"error": "Query too long (max 500 characters)"}
 
+    # --- Search Logic with Caching ---
     try:
-        # Add user-specific cache key
+        # Use user-specific cache key for search results
         cache_key = f"search:{email}:{query.lower()}"
-        cached_results = await redis_cache.get_cache(cache_key)
-        if cached_results:
-            return {"query": query, "cached": True, "results": cached_results}
+        cached_results = None
+        try:
+            cached_results = await redis_cache.get_cache(cache_key)
+        except redis.RedisError as redis_err:
+            # Log Redis error but proceed without cache
+            logger.error("⚠️ Redis cache GET error for key '%s' (User: %s): %s. Proceeding without cache.", cache_key, email, redis_err)
+        except Exception as e:
+            logger.error("❌ Unexpected error during cache GET for key '%s' (User: %s): %s. Proceeding without cache.", cache_key, email, e)
 
-        fetcher = ProductFetcher()
-        search_results = await fetcher.fetch_products(query)
+        if cached_results:
+            logger.info("Cache hit for search query: '%s'. User: %s", query, email)
+            return {"query": query, "cached": True, "results": cached_results, "user": email}
+        else:
+            logger.info("Cache miss for search query: '%s'. User: %s. Processing request.", query, email)
+
+        # Execute the core search logic via the agent
+        products = await search_agent.search(query, top_n=10)
+
+        search_results = [product.to_json() for product in products]
 
         if not search_results:
-            return {"query": query, "results": [], "message": "No products found"}
+            logger.info("No products found for query: '%s'. User: %s", query, email)
+            return {"query": query, "results": [], "message": "No products found", "user": email}
 
-        await redis_cache.set_cache(cache_key, search_results)
+        # Cache the results
+        try:
+            await redis_cache.set_cache(cache_key, search_results, ttl=CACHE_SEARCH_RESULTS_TTL)
+            logger.info("Cached search results for key: '%s' (TTL: %ds). User: %s", cache_key, CACHE_SEARCH_RESULTS_TTL, email)
+        except redis.RedisError as redis_err:
+            # Log Redis error but return results anyway
+            logger.error("⚠️ Redis cache SET error for key '%s' (User: %s): %s. Results returned but not cached.", cache_key, email, redis_err)
+        except Exception as e:
+            logger.error("❌ Unexpected error during cache SET for key '%s' (User: %s): %s. Results returned but not cached.", cache_key, email, e)
+
         return {"query": query, "cached": False, "results": search_results, "user": email}
 
-    except (OpenAIServiceError, FAISSIndexError, StoreAPIError) as e:
-        logger.error("❌ Search error: %s", str(e))
-        return {"error": "Unable to complete your search at this time."}
+    # --- Error Handling ---
+    except RateLimitExceeded as e:
+        logger.warning("Rate limit exceeded for user %s. Detail: %s", email, e.detail)
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=f"Rate limit exceeded: {e.detail}")
+    except (OpenAIServiceError, SerpAPIException) as e:
+        logger.error("❌ Service error during search for query '%s', User '%s': %s", query, email, e)
+        # Use status code from the custom exception if available, default to 503
+        status_code = getattr(e, "status_code", 503)
+        raise HTTPException(status_code=status_code, detail="Service temporarily unavailable, please try again later.")
     except ValueError as e:
-        logger.error("❌ Invalid input: %s", str(e))
-        return {"error": "Invalid search parameters"}
+        logger.error("❌ Invalid data encountered during search for query '%s', User '%s': %s", query, email, e)
+        raise HTTPException(status_code=400, detail="Invalid data encountered during search.")
+    except Exception as e:
+        logger.exception("💥 Unexpected internal error during search for query '%s', User '%s': %s", query, email, e)
+        raise HTTPException(status_code=500, detail="An internal server error occurred processing your request.")
