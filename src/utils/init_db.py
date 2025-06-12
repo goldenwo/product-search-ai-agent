@@ -8,8 +8,6 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from src.models.base import Base  # IMPORT THE SHARED BASE
 from src.utils.config import DATABASE_URL
 
-# REMOVED: Base = declarative_base() # DO NOT REDEFINE BASE HERE
-
 
 class User(Base):  # Uses the imported Base
     """Database model for user table."""

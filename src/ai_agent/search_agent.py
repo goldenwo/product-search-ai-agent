@@ -353,7 +353,7 @@ class SearchAgent:
             start_rank_time = time.time()
 
             # Get the full response object from the service
-            response_obj = self.openai_service.generate_response(prompt, model=OPENAI_CHAT_MODEL, max_tokens=3000)
+            response_obj = await self.openai_service.generate_response(prompt, model=OPENAI_CHAT_MODEL, max_tokens=3000)
             rank_duration = time.time() - start_rank_time
 
             # Extract content and log usage

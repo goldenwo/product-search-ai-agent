@@ -205,8 +205,8 @@ class ProductEnricher:
         if "description" in specs and specs["description"]:
             new_desc = str(specs["description"]).strip()
             old_desc_len = len(product.description or "")
-            # Criteria: significantly longer (relative + absolute) OR filling an empty description
-            if (len(new_desc) > old_desc_len * 1.2 and len(new_desc) > old_desc_len + 50) or (is_empty(product.description) and len(new_desc) > 20):
+            # Criteria: significantly longer OR filling an empty description (with minimal length check)
+            if (len(new_desc) > old_desc_len * 1.2 and len(new_desc) > old_desc_len + 50) or (is_empty(product.description) and len(new_desc) > 5):
                 product.description = new_desc
 
         if "category" in specs and specs["category"] and is_empty(product.category):
@@ -365,37 +365,23 @@ class ProductEnricher:
             # Merge AI specs, prioritizing existing structured data keys where overlaps occur
             if ai_specs:
                 # Merge 'specifications' dictionary intelligently
-                if isinstance(ai_specs.get("specifications"), dict) and isinstance(all_specs.get("specifications"), dict):
+                if isinstance(ai_specs.get("specifications"), dict):
                     # Prioritize existing keys from structured data, add new ones from AI
-                    merged_sub_specs = {**ai_specs["specifications"], **all_specs["specifications"]}
+                    merged_sub_specs = {**ai_specs["specifications"], **all_specs.get("specifications", {})}
                     all_specs["specifications"] = merged_sub_specs
-                elif isinstance(ai_specs.get("specifications"), dict):
-                    all_specs["specifications"] = ai_specs["specifications"]
 
-                # Merge other top-level keys provided by AI (brand, category, description, features)
-                # The _update_product_from_specs method will handle the merging logic carefully
+                # Merge other top-level keys provided by AI.
+                # The logic in `_update_product_from_specs` prevents overwriting good data with bad.
                 for key in ["brand", "category", "description", "features"]:
                     if key in ai_specs and ai_specs[key]:
-                        # Store AI value temporarily; final merge/overwrite logic is in _update_product_from_specs
-                        all_specs[f"ai_{key}"] = ai_specs[key]
-
-            # Prepare final specs dict for the update method by resolving temporary AI keys
-            # This ensures the update method gets a clean dict with the intended final values
-            final_specs_for_update = {k: v for k, v in all_specs.items() if not k.startswith("ai_")}
-            if "ai_brand" in all_specs:
-                final_specs_for_update["brand"] = all_specs["ai_brand"]
-            if "ai_category" in all_specs:
-                final_specs_for_update["category"] = all_specs["ai_category"]
-            if "ai_description" in all_specs:
-                final_specs_for_update["description"] = all_specs["ai_description"]
-            if "ai_features" in all_specs:
-                final_specs_for_update["features"] = all_specs["ai_features"]
+                        # Directly add the key. The update function will decide whether to use it.
+                        all_specs[key] = ai_specs[key]
 
             # Log final state if AI extraction was attempted
             if ai_specs:
-                logger.info("ℹ️ Combined specs ready for update for %s (Keys: %d)", product_name or url, len(final_specs_for_update))
+                logger.info("ℹ️ Combined specs ready for update for %s (Keys: %d)", product_name or url, len(all_specs))
 
-            return final_specs_for_update
+            return all_specs
 
         except Exception as e:
             logger.error("❌ Error extracting specifications for %s: %s", product_name or url, e)
@@ -425,8 +411,9 @@ class ProductEnricher:
         """
         try:
             base_url = get_base_url(html_content, url)
-            # Extract metadata using extruct (supports JSON-LD, Microdata, OpenGraph)
             metadata = extruct.extract(html_content, base_url=base_url, uniform=True, syntaxes=["json-ld", "microdata", "opengraph"])
+            # Add temporary logging
+            logger.debug("Extracted metadata for %s: %s", url, json.dumps(metadata, indent=2))
 
             specs = {}
 
@@ -491,16 +478,44 @@ class ProductEnricher:
                                         specs["condition"] = str(condition_url)
 
             # Process microdata (second priority, if JSON-LD wasn't sufficient)
-            if len(specs) < 3:  # Check if we have minimal data before trying next format
+            if len(specs) < 3:
                 for item in metadata.get("microdata", []):
-                    if item.get("type") in ["https://schema.org/Product", "http://schema.org/Product"]:
-                        props = item.get("properties", {})
-                        for key, value in props.items():
-                            # If value is list, take first item, otherwise take value directly
-                            if isinstance(value, list) and value:
-                                specs[key] = value[0]
-                            else:
-                                specs[key] = value
+                    # Process items directly, extruct uniform=True flattens properties
+                    if item.get("@type") == "Product" or item.get("@type") == "http://schema.org/Product":
+                        # Extract specific known properties directly from item
+                        if "name" in item and "name" not in specs:
+                            specs["name"] = self._get_first_item(item["name"])
+                        if "description" in item and "description" not in specs:
+                            specs["description"] = self._get_first_item(item["description"])
+                        if "sku" in item and "sku" not in specs:
+                            specs["sku"] = self._get_first_item(item["sku"])
+                        if "mpn" in item and "mpn" not in specs:
+                            specs["mpn"] = self._get_first_item(item["mpn"])
+                        if "brand" in item and "brand" not in specs:
+                            brand_value = self._get_first_item(item["brand"])
+                            if isinstance(brand_value, dict) and brand_value.get("@type") == "Brand":  # Use @type for uniform extruct
+                                specs["brand"] = brand_value.get("name")  # Direct name access
+                            elif isinstance(brand_value, str):
+                                specs["brand"] = brand_value
+                        if "offers" in item and "offers" not in specs:
+                            offer_value = self._get_first_item(item["offers"])
+                            if isinstance(offer_value, dict) and offer_value.get("@type") == "Offer":  # Use @type
+                                if "price" in offer_value:
+                                    specs["price"] = self._get_first_item(offer_value["price"])
+                                if "priceCurrency" in offer_value:
+                                    specs["currency"] = self._get_first_item(offer_value["priceCurrency"])
+                                if "availability" in offer_value:
+                                    specs["availability"] = self._get_first_item(offer_value["availability"])
+                                if "itemCondition" in offer_value:
+                                    condition_url = self._get_first_item(offer_value["itemCondition"])
+                                    if isinstance(condition_url, str):
+                                        specs["condition"] = condition_url.split("/")[-1].lower()
+                                    else:
+                                        specs["condition"] = str(condition_url)
+                        # Optionally extract other props if needed, checking they aren't already set
+                        # for key, value in item.items():
+                        #     if key not in specs and key not in ["@type", "@context", "name", "description", "brand", "sku", "mpn", "offers"]:
+                        #         specs[key] = self._get_first_item(value)
 
             # Process OpenGraph data (third priority)
             if len(specs) < 3:
@@ -665,8 +680,8 @@ Your task is to extract key product information accurately.
 **JSON Output:**
 """
 
-            # Use JSON mode
-            response = self.openai_service.generate_response(
+            # Use JSON mode - ADD AWAIT HERE
+            response = await self.openai_service.generate_response(
                 prompt,
                 model=OPENAI_EXTRACTION_MODEL,  # Use dedicated model from config
                 max_tokens=2000,
@@ -704,3 +719,10 @@ Your task is to extract key product information accurately.
         except Exception as e:
             logger.error("❌ Error using AI to extract specifications for %s: %s", product_name or "product", e)
             return {}  # Return empty dict on failure
+
+    # --- Helper Method ---
+    def _get_first_item(self, value: Any) -> Any:
+        """Helper to get the first item if value is a list, else return value."""
+        if isinstance(value, list) and value:
+            return value[0]
+        return value
