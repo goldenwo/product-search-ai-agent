@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from pydantic import HttpUrl
 import pytest
 
-from src.models.product import Product
+from src.schemas.product import Product
 from src.services.openai_service import OpenAIService, OpenAIServiceError
 from src.services.product_enricher import ProductEnricher
 

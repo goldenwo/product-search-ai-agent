@@ -11,7 +11,7 @@ import extruct
 from playwright.async_api import async_playwright
 from w3lib.html import get_base_url
 
-from src.models.product import Product
+from src.schemas.product import Product
 from src.services.openai_service import OpenAIService
 from src.utils import logger
 from src.utils.config import ENRICHMENT_USE_HEADLESS_FALLBACK, HEADLESS_BROWSER_ENDPOINT, OPENAI_EXTRACTION_MODEL

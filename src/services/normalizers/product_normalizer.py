@@ -1,19 +1,21 @@
 """Normalizers for transforming raw API data into structured product models."""
 
+from abc import ABC, abstractmethod
 from decimal import Decimal, InvalidOperation
 import re
 from typing import Any, Dict, Optional
 
-from src.models.product import Product
+from src.schemas.product import Product
 from src.utils import logger
 
 
-class ProductNormalizer:
-    """
-    Normalizes raw product data from various sources into consistent Product objects.
+class ProductNormalizer(ABC):
+    """Abstract base class for product normalization."""
 
-    Provides dedicated normalizers for different data sources.
-    """
+    @abstractmethod
+    def normalize(self, data: Dict[str, Any]) -> Product:
+        """Normalize raw data into a Product object."""
+        raise NotImplementedError
 
     @staticmethod
     def normalize_serp_product(item: Dict[str, Any], position: int) -> Optional[Product]:

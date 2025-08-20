@@ -1,5 +1,7 @@
 """User service for managing user data in the database."""
 
+from __future__ import annotations
+
 from datetime import datetime, timezone
 import os
 from typing import Optional
@@ -8,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
-from src.models.user import UserCreate, UserInDB
+from src.schemas.user import UserCreate, UserInDB
 from src.utils import logger
 from src.utils.config import DATABASE_URL as DEFAULT_CONFIG_DATABASE_URL
 
@@ -37,10 +39,10 @@ class UserService:
         Retrieve a user from the database by email.
 
         Args:
-            email: User's email address
+                email: User's email address
 
         Returns:
-            UserInDB if found, None otherwise
+                UserInDB if found, None otherwise
         """
         async with self.async_session() as session:
             result = await session.execute(
@@ -66,24 +68,24 @@ class UserService:
         Create a new user in the database. is_verified defaults to FALSE.
 
         Args:
-            user_data: User creation data
-            hashed_password: Pre-hashed password
+                user_data: User creation data
+                hashed_password: Pre-hashed password
 
         Returns:
-            UserInDB: Created user data
+                UserInDB: Created user data
 
         Raises:
-            SQLAlchemyError: If database operation fails
+                SQLAlchemyError: If database operation fails
         """
         async with self.async_session() as session:
             async with session.begin():
                 try:
                     result = await session.execute(
                         text("""
-                        INSERT INTO users (email, username, hashed_password, is_verified)
-                        VALUES (:email, :username, :hashed_password, FALSE)
-                        RETURNING email, username, hashed_password, is_verified
-                        """),
+						INSERT INTO users (email, username, hashed_password, is_verified)
+						VALUES (:email, :username, :hashed_password, FALSE)
+						RETURNING email, username, hashed_password, is_verified
+						"""),
                         {"email": user_data.email, "username": user_data.username, "hashed_password": hashed_password},
                     )
                     user_row = result.first()
@@ -127,9 +129,9 @@ class UserService:
                 try:
                     await session.execute(
                         text("""
-                        INSERT INTO email_verification_tokens (user_email, token, expires_at)
-                        VALUES (:user_email, :token, :expires_at)
-                        """),
+						INSERT INTO email_verification_tokens (user_email, token, expires_at)
+						VALUES (:user_email, :token, :expires_at)
+						"""),
                         {"user_email": user_email, "token": token, "expires_at": expires_at},
                     )
                     logger.info("Stored verification token for %s", user_email)
@@ -144,9 +146,9 @@ class UserService:
                 current_time = datetime.now(timezone.utc)
                 result = await session.execute(
                     text(""" 
-                    SELECT user_email FROM email_verification_tokens
-                    WHERE token = :token AND expires_at > :current_time
-                    """),
+					SELECT user_email FROM email_verification_tokens
+					WHERE token = :token AND expires_at > :current_time
+					"""),
                     {"token": token, "current_time": current_time},
                 )
                 record = result.first()

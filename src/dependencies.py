@@ -6,6 +6,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from src.ai_agent.search_agent import SearchAgent
+from src.db.session import SessionLocal
 
 # Core Services
 from src.services.auth_service import AuthService
@@ -139,6 +140,24 @@ limiter = Limiter(
     strategy="fixed-window",
     default_limits=["1000/minute"],
 )
+
+
+async def get_db_session():
+    """Dependency to get a database session."""
+    async with SessionLocal() as session:
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
+
+def get_redis_client(redis_service: RedisService = Depends(get_redis_service)):
+    """Expose the underlying Redis client for dependencies that expect a raw client."""
+    return redis_service.redis
+
 
 # You can add other shared dependencies here later, e.g.:
 # def get_db_session(): ...

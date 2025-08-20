@@ -1,5 +1,7 @@
 """Search agent that coordinates the entire AI product search flow."""
 
+from __future__ import annotations
+
 import asyncio
 import hashlib
 import json
@@ -9,7 +11,7 @@ from typing import List
 
 import redis
 
-from src.models.product import Product
+from src.schemas.product import Product
 from src.services.openai_service import OpenAIService
 from src.services.product_enricher import ProductEnricher
 from src.services.redis_service import RedisService

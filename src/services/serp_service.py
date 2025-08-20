@@ -2,7 +2,7 @@
 
 from typing import List, Optional
 
-from src.models.product import Product
+from src.schemas.product import Product
 from src.services.clients.serp_api_client import SerpAPIClient
 from src.services.normalizers.product_normalizer import ProductNormalizer
 from src.utils import logger

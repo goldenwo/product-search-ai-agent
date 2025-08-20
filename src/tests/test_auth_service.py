@@ -8,7 +8,7 @@ import jwt
 import pytest
 from redis.exceptions import RedisError
 
-from src.models.user import UserCreate, UserInDB, UserLogin
+from src.schemas.user import UserCreate, UserInDB, UserLogin
 from src.services.auth_service import AuthService
 from src.services.email_service import EmailService
 from src.services.redis_service import RedisService

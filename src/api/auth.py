@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from src.dependencies import get_auth_service, limiter
-from src.models.user import Token, UserCreate, UserLogin
+from src.schemas.user import Token, UserCreate, UserLogin
 from src.services.auth_service import AuthService
 from src.utils import logger
 from src.utils.config import JWT_SECRET_KEY

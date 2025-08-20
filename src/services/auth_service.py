@@ -10,7 +10,7 @@ from fastapi import HTTPException, status
 import jwt
 from passlib.hash import bcrypt
 
-from src.models.user import Token, UserCreate, UserInDB, UserLogin
+from src.schemas.user import Token, UserCreate, UserInDB, UserLogin
 from src.services.email_service import EmailService
 from src.services.rate_limit_service import RateLimitService
 from src.services.redis_service import RedisService
@@ -24,6 +24,10 @@ from src.utils.config import (
     REFRESH_TOKEN_EXPIRE_DAYS,
     VERIFICATION_TOKEN_EXPIRE_HOURS,
 )
+
+
+class UserAlreadyExistsError(Exception):
+    """Raised when attempting to create a user that already exists."""
 
 
 class AuthService:
