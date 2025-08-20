@@ -86,7 +86,7 @@ async def setup_test_database():
 
 
 @pytest_asyncio.fixture(scope="function")
-async def test_engine() -> AsyncEngine:
+async def test_engine() -> AsyncGenerator[AsyncEngine, None]:
     """Function-scoped AsyncEngine with isolated schema for integration tests."""
     engine = create_async_engine(TEST_DATABASE_URL)
     async with engine.begin() as conn:
