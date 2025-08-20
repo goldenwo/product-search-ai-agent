@@ -2,35 +2,11 @@
 
 import asyncio
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String  # Added func
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from src.models.base import Base  # IMPORT THE SHARED BASE
+from src.db.models import EmailVerificationToken, Product, User  # noqa: F401
+from src.schemas.base import Base
 from src.utils.config import DATABASE_URL
-
-# REMOVED: Base = declarative_base() # DO NOT REDEFINE BASE HERE
-
-
-class User(Base):  # Uses the imported Base
-    """Database model for user table."""
-
-    __tablename__ = "users"
-    email = Column(String, primary_key=True, index=True)
-    username = Column(String, nullable=False)
-    hashed_password = Column(String, nullable=False)
-    is_verified = Column(Boolean, default=False, nullable=False)  # Added is_verified
-
-
-class EmailVerificationToken(Base):  # Uses the imported Base
-    """Database model for email_verification_tokens table."""
-
-    __tablename__ = "email_verification_tokens"
-
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)  # Standard integer primary key
-    user_email = Column(String, ForeignKey("users.email", ondelete="CASCADE"), nullable=False, index=True)
-    token = Column(String, unique=True, nullable=False, index=True)
-    expires_at = Column(DateTime(timezone=True), nullable=False)
-    # created_at = Column(DateTime(timezone=True), server_default=func.now()) # Optional: for tracking creation time
 
 
 async def init_db():

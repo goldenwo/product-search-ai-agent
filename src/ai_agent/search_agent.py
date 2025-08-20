@@ -1,5 +1,7 @@
 """Search agent that coordinates the entire AI product search flow."""
 
+from __future__ import annotations
+
 import asyncio
 import hashlib
 import json
@@ -9,7 +11,7 @@ from typing import List
 
 import redis
 
-from src.models.product import Product
+from src.schemas.product import Product
 from src.services.openai_service import OpenAIService
 from src.services.product_enricher import ProductEnricher
 from src.services.redis_service import RedisService
@@ -353,7 +355,7 @@ class SearchAgent:
             start_rank_time = time.time()
 
             # Get the full response object from the service
-            response_obj = self.openai_service.generate_response(prompt, model=OPENAI_CHAT_MODEL, max_tokens=3000)
+            response_obj = await self.openai_service.generate_response(prompt, model=OPENAI_CHAT_MODEL, max_tokens=3000)
             rank_duration = time.time() - start_rank_time
 
             # Extract content and log usage

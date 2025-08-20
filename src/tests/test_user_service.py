@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from src.models.user import UserCreate, UserInDB
+from src.schemas.user import UserCreate, UserInDB
 from src.services.user_service import UserService
 
 

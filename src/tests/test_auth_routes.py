@@ -17,7 +17,7 @@ import pytest
 # from starlette.requests import Request as StarletteRequest # To avoid conflict with FastAPI's Request
 # from starlette.responses import Response as StarletteResponse # To avoid conflict with FastAPI's Response
 from src.dependencies import get_auth_service  # To override this dependency
-from src.models.user import (
+from src.schemas.user import (
     Token,
     UserCreate,
     UserInDB,

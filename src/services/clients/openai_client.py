@@ -3,6 +3,7 @@
 from typing import Dict, List, Literal, Optional, Union
 
 import openai
+from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion
 from openai.types.chat.chat_completion_assistant_message_param import ChatCompletionAssistantMessageParam
 from openai.types.chat.chat_completion_message_param import ChatCompletionMessageParam
@@ -32,7 +33,7 @@ class OpenAIClient:
             api_key: Optional API key override
         """
         self.api_key = api_key or OPENAI_API_KEY
-        self.client = openai.OpenAI(api_key=self.api_key)
+        self.client = AsyncOpenAI(api_key=self.api_key)
 
         if not self.api_key:
             logger.warning("⚠️ No OpenAI API key provided. API calls will fail.")
@@ -61,7 +62,7 @@ class OpenAIClient:
             logger.warning("Invalid role '%s' provided to create_message, defaulting to 'user'.", role)
             return ChatCompletionUserMessageParam(role="user", content=content)
 
-    def create_chat_completion(
+    async def create_chat_completion(
         self,
         messages: List[ChatCompletionMessageParam],
         model: str = "gpt-4o-mini",
@@ -99,14 +100,14 @@ class OpenAIClient:
             if response_format:
                 api_args["response_format"] = response_format
 
-            # Return the full response object
-            response = self.client.chat.completions.create(**api_args)
+            # Add await for the actual async API call
+            response = await self.client.chat.completions.create(**api_args)
             return response
         except openai.OpenAIError as e:
             logger.error("❌ OpenAI chat completion API error: %s", e)
             raise
 
-    def create_embeddings(self, texts: Union[str, List[str]], model: str = "text-embedding-3-small") -> List[Embedding]:
+    async def create_embeddings(self, texts: Union[str, List[str]], model: str = "text-embedding-3-small") -> List[Embedding]:
         """
         Create embeddings via OpenAI API.
 
@@ -124,7 +125,8 @@ class OpenAIClient:
             # Convert single string to list for consistent handling
             input_texts = [texts] if isinstance(texts, str) else texts
 
-            response = self.client.embeddings.create(
+            # Add await for the actual async API call
+            response = await self.client.embeddings.create(
                 model=model,
                 input=input_texts,
             )

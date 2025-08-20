@@ -74,6 +74,8 @@ JWT_REFRESH_SECRET_KEY = os.getenv("JWT_REFRESH_SECRET_KEY")
 
 # Database Settings
 DATABASE_URL = os.getenv("DATABASE_URL")
+# Test Database (used by pytest). Defaults to in-memory SQLite if not provided.
+TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 
 # Enrichment Settings
 ENRICHMENT_MAX_PARALLEL = get_env_int("ENRICHMENT_MAX_PARALLEL", "5")  # Max concurrent enrichment tasks

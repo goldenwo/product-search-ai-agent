@@ -30,11 +30,14 @@ class OpenAIService:
         self.client = OpenAIClient(api_key=api_key)
 
     @retry(
-        stop=stop_after_attempt(3),  # Retry 3 times
-        wait=wait_fixed(2),  # Wait 2 seconds between retries
-        retry=retry_if_exception_type(openai.OpenAIError),  # Retry only OpenAI API errors
+        stop=stop_after_attempt(3),
+        wait=wait_fixed(2),
+        # Revert to specific retry condition
+        retry=retry_if_exception_type(openai.OpenAIError),
     )
-    def generate_response(self, prompt: str, model: str = OPENAI_CHAT_MODEL, max_tokens: int = 1500, use_json_mode: bool = False) -> ChatCompletion:
+    async def generate_response(
+        self, prompt: str, model: str = OPENAI_CHAT_MODEL, max_tokens: int = 1500, use_json_mode: bool = False
+    ) -> ChatCompletion:
         """
         Generates a response from OpenAI's chat completion API. Retries on failure.
 
@@ -58,22 +61,27 @@ class OpenAIService:
             # Set response_format if JSON mode requested
             response_format_arg = {"type": "json_object"} if use_json_mode else None
 
-            response = self.client.create_chat_completion(
+            # Let this call directly raise openai.OpenAIError if it occurs
+            response = await self.client.create_chat_completion(
                 messages=messages, model=model, temperature=0.2, max_tokens=max_tokens, response_format=response_format_arg
             )
+
             if not response.choices or not response.choices[0].message.content:
+                # This specific service error (empty content) should not be retried by tenacity
+                # if it's not an instance of openai.OpenAIError.
                 raise OpenAIServiceError("Empty response content from OpenAI")
             return response
 
-        except openai.OpenAIError as e:
-            logger.error("❌ OpenAI API returned an error: %s", e)
-            raise OpenAIServiceError("OpenAI API error") from e
-
-        except Exception as e:
-            logger.error("❌ Unexpected OpenAI error: %s", e)
+        except OpenAIServiceError:  # Catches "Empty response content"
+            raise  # Re-raise OpenAIServiceError directly if it's not an OpenAIError
+        except openai.OpenAIError as e:  # This is hit if tenacity gives up after retrying openai.OpenAIError
+            logger.error("❌ OpenAI API error after all retries: %s", e)
+            raise OpenAIServiceError("OpenAI API error after all retries") from e
+        except Exception as e:  # For any other unexpected errors
+            logger.error("❌ Unexpected error in generate_response: %s", e)
             raise OpenAIServiceError("Unexpected OpenAI Failure") from e
 
-    def generate_embedding(self, text: Union[str, List[str]], model: str = OPENAI_EMBEDDING_MODEL) -> np.ndarray:
+    async def generate_embedding(self, text: Union[str, List[str]], model: str = OPENAI_EMBEDDING_MODEL) -> np.ndarray:
         """
         Generate embedding vector(s) for text using OpenAI's embedding model.
 
@@ -89,10 +97,10 @@ class OpenAIService:
         """
         try:
             # Get embeddings from the client
-            embeddings = self.client.create_embeddings(text, model=model)
+            embeddings = await self.client.create_embeddings(text, model=model)
             # Always return 2D array of shape (n_texts, embedding_dim)
             return np.array([item.embedding for item in embeddings])
 
-        except (openai.OpenAIError, ValueError, TypeError) as e:
+        except (openai.OpenAIError, ValueError, TypeError) as e:  # Keep this broad for embeddings as tenacity is not used here
             logger.error("❌ Error generating embedding: %s", e)
             raise OpenAIServiceError("Failed to generate embedding") from e
