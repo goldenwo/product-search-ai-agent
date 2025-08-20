@@ -9,7 +9,6 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
-from src.main import app as fastapi_app
 from src.schemas.base import Base
 
 # Define test DB URL locally to avoid importing config (which binds env too early)
@@ -21,6 +20,8 @@ os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 @pytest.fixture(scope="session")
 def app():
     """Provide the FastAPI app instance as a test fixture."""
+    from src.main import app as fastapi_app  # local import to avoid early side effects
+
     return fastapi_app
 
 
