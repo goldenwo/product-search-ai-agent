@@ -16,7 +16,9 @@ from src.services.redis_service import RedisService
 from src.services.serp_service import SerpService
 from src.services.user_service import UserService
 from src.utils import logger
-from src.utils.config import OPENAI_API_KEY, REDIS_DB, REDIS_HOST, REDIS_PORT  # Added OpenAI Key
+from src.utils.config import OPENAI_API_KEY, REDIS_DB, REDIS_HOST, REDIS_PORT, DEBUG  # Added OpenAI Key
+
+storage_uri = "memory://" if DEBUG else f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
 
 # --- Cached Singleton Instances ---
 # Use a simple dictionary to cache instances within the application lifecycle
@@ -135,7 +137,7 @@ def key_func_user_or_ip(request: Request) -> str:
 # --- Rate Limiter Instance --- (Keep as is)
 limiter = Limiter(
     key_func=get_remote_address,  # NOTE: Default key_func, route overrides where needed
-    storage_uri=f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}",
+    storage_uri=storage_uri,
     strategy="fixed-window",
     default_limits=["1000/minute"],
 )

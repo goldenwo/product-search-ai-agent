@@ -3,11 +3,15 @@
 import json
 from typing import Any, Optional
 
-from redis.asyncio import Redis
 from redis.exceptions import RedisError
-
 from src.utils import logger
-from src.utils.config import CACHE_TTL, REDIS_DB, REDIS_HOST, REDIS_PORT
+from src.utils.config import CACHE_TTL, REDIS_DB, REDIS_HOST, REDIS_PORT, DEBUG
+
+if DEBUG:
+    import fakeredis.aioredis as redis_client  # type: ignore
+else:
+    from redis.asyncio import Redis as redis_client
+
 
 
 class RedisService:
@@ -21,7 +25,11 @@ class RedisService:
 
     def __init__(self):
         """Initialize Redis connection with configuration."""
-        self.redis = Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, decode_responses=True)
+        if DEBUG:
+            # In-memory fake; nothing external required
+            self.redis = redis_client.FakeRedis()
+        else:
+            self.redis = redis_client(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, decode_responses=True)
         self.cache_ttl = CACHE_TTL
 
     async def get_cache(self, key: str) -> Optional[Any]:
