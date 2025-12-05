@@ -42,7 +42,7 @@ async def lifespan(application: FastAPI):
 # Initialize FastAPI app with lifespan manager
 app = FastAPI(
     title="AI-Powered Product Search API",
-    description="An AI-driven product search system using OpenAI, FAISS, and live store data.",
+    description="An AI-driven product search system using OpenAI, and live store data.",
     version="1.0.0",
     lifespan=lifespan,
 )
