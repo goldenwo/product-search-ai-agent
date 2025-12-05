@@ -30,7 +30,6 @@ urllib3 = "==2.3.0"
 colorama = "==0.4.6"
 email-validator = "*"
 asyncpg = "*"
-fakeredis = "*"
 
 [dev-packages]
 pre-commit = "*"
@@ -39,6 +38,7 @@ pytest-asyncio = "*"
 pytest-mock = "*"
 aiosqlite = "*"
 ruff = "==0.9.4"
+fakeredis = "*"
 
 [requires]
 python_version = "3.11"
